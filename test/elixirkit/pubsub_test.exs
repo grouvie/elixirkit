@@ -291,6 +291,97 @@ defmodule ElixirKit.PubSub.Test do
     assert_receive {^port, {:exit_status, 0}}, 10_000
   end
 
+  test "registered opener capability is discoverable and opener.open dispatches against the rust side" do
+    port =
+      rust(~s"""
+      use elixirkit::{
+          ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityNamespace,
+          CapabilityPermission,
+      };
+
+      fn main() {
+          let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0")
+              .expect("failed to listen");
+
+          pubsub.register_capability(CapabilityNamespace::new(
+              "opener",
+              CapabilityBacking::TauriPlugin,
+              CapabilityPermission::NotApplicable,
+              vec![CapabilityAction::new("open", ActionAvailability::Available)],
+          ))
+          .expect("failed to register opener capability");
+
+          pubsub.register_operation_handler("opener.open", |payload| {
+              if payload == b"https://example.com" {
+                  Ok(Vec::new())
+              } else {
+                  Err(format!(
+                      "unexpected opener target: {}",
+                      String::from_utf8_lossy(payload)
+                  ))
+              }
+          })
+          .expect("failed to register opener handler");
+
+          let code = r#"
+              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+
+              {:ok, _} =
+                ElixirKit.Bridge.start_link(
+                  connect: System.fetch_env!("ELIXIRKIT_PUBSUB"),
+                  on_exit: fn -> System.stop() end
+                )
+
+              case ElixirKit.Bridge.capabilities() do
+                %{
+                  "bridge" => %{
+                    backing: :core,
+                    permission: :not_applicable,
+                    actions: bridge_actions
+                  },
+                  "opener" => %{
+                    backing: :tauri_plugin,
+                    permission: :not_applicable,
+                    actions: %{"open" => :available}
+                  }
+                } ->
+                  if bridge_actions["echo"] == :available and
+                       bridge_actions["capabilities"] == :available do
+                    :ok
+                  else
+                    IO.puts("unexpected bridge actions: \#{inspect(bridge_actions)}")
+                    System.halt(1)
+                  end
+
+                other ->
+                  IO.puts("unexpected capabilities: \#{inspect(other)}")
+                  System.halt(1)
+              end
+
+              case ElixirKit.Opener.open("https://example.com") do
+                :ok ->
+                  IO.puts("got: opened")
+
+                other ->
+                  IO.puts("unexpected opener result: \#{inspect(other)}")
+                  System.halt(1)
+              end
+          "#;
+
+          let status = elixirkit::elixir(&["-e", code])
+              .env("ELIXIRKIT_PUBSUB", pubsub.url())
+              .status()
+              .expect("failed to start Elixir");
+
+          pubsub.wait();
+          std::process::exit(status.code().unwrap_or(1));
+      }
+      """)
+
+    assert_receive {^port, {:data, {:eol, "got: opened"}}}, 10_000
+    assert_receive {^port, {:exit_status, 0}}, 10_000
+  end
+
   test "exit status propagates" do
     port =
       rust(~s"""

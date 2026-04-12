@@ -1,4 +1,9 @@
+use elixirkit::{
+    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityNamespace,
+    CapabilityPermission,
+};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -7,6 +12,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            register_opener(&pubsub, app.handle());
+
             let app_handle = app.handle().clone();
 
             pubsub.subscribe("messages", move |msg| {
@@ -32,6 +39,32 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn register_opener(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
+    pubsub
+        .register_capability(CapabilityNamespace::new(
+            "opener",
+            CapabilityBacking::TauriPlugin,
+            CapabilityPermission::NotApplicable,
+            vec![CapabilityAction::new("open", ActionAvailability::Available)],
+        ))
+        .expect("failed to register opener capability");
+
+    let app_handle = app_handle.clone();
+    pubsub
+        .register_operation_handler("opener.open", move |payload| {
+            let target = std::str::from_utf8(payload)
+                .map_err(|_| String::from("opener target must be valid UTF-8"))?;
+
+            app_handle
+                .opener()
+                .open_url(target, None::<&str>)
+                .map_err(|error| error.to_string())?;
+
+            Ok(Vec::new())
+        })
+        .expect("failed to register opener handler");
 }
 
 fn create_window(app_handle: &tauri::AppHandle) {

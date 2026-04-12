@@ -78,8 +78,8 @@ internal router per bridge connection, implemented internally as
 matches responses by opaque request id for all brokered calls, including
 capability lookup. Today the built-in core-owned operations are still narrow:
 `bridge.echo` exists as a small end-to-end proof path for later capability
-work, and `bridge.capabilities` reports built-in feature truth from the core
-registry:
+work, and `bridge.capabilities` reports feature truth from the core registry
+plus any host capabilities explicitly registered on this bridge connection:
 
 ```elixir
 case ElixirKit.Bridge.call("bridge.echo", "ping") do
@@ -89,10 +89,38 @@ end
 ```
 
 This brokered call path still rides over the current TCP PubSub transport. It
-does not replace raw PubSub topics, and it does not introduce capability
-discovery, plugins, or any WebView-based bridge layer.
+does not replace raw PubSub topics, and it does not introduce any WebView-based
+bridge layer.
 
-The bridge can also report its current built-in capability truth:
+The first real host capability vertical slice can now be registered explicitly
+from Rust. The current example app does that for `opener`:
+
+```rust
+use elixirkit::{
+    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityNamespace,
+    CapabilityPermission,
+};
+use tauri_plugin_opener::OpenerExt;
+
+pubsub.register_capability(CapabilityNamespace::new(
+    "opener",
+    CapabilityBacking::TauriPlugin,
+    CapabilityPermission::NotApplicable,
+    vec![CapabilityAction::new("open", ActionAvailability::Available)],
+))?;
+
+pubsub.register_operation_handler("opener.open", move |payload| {
+    let target = std::str::from_utf8(payload)
+        .map_err(|_| String::from("opener target must be valid UTF-8"))?;
+
+    app_handle.opener().open_url(target, None::<&str>)
+        .map_err(|error| error.to_string())?;
+
+    Ok(Vec::new())
+})?;
+```
+
+Capability discovery reflects that explicit registration:
 
 ```elixir
 %{
@@ -103,14 +131,31 @@ The bridge can also report its current built-in capability truth:
       "capabilities" => :available,
       "echo" => :available
     }
+  },
+  "opener" => %{
+    backing: :tauri_plugin,
+    permission: :not_applicable,
+    actions: %{
+      "open" => :available
+    }
   }
 } = ElixirKit.Bridge.capabilities()
 ```
 
+`ElixirKit.Opener` is the matching tiny Elixir wrapper for that first
+registered host capability:
+
+```elixir
+case ElixirKit.Opener.open("https://elixir-lang.org") do
+  :ok -> :ok
+  {:error, reason} -> IO.inspect(reason, label: "open failed")
+end
+```
+
 This is feature discovery, not authorization. Availability is reported per
-action, while permission state stays separate. At this stage the registry is
-still internal, built-in, and core-owned; there is no external registration
-seam yet, and this is not the later plugin rollout.
+action, while permission state stays separate. Registration is still explicit
+at the app layer, and this is still not the later package split or omnibus
+plugin rollout.
 
 ## License
 

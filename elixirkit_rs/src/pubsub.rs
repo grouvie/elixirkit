@@ -11,6 +11,7 @@ use crate::runtime::Runtime;
 #[derive(Clone)]
 pub struct PubSub {
     runtime: Runtime,
+    broker: broker::State,
 }
 
 impl PubSub {
@@ -73,13 +74,52 @@ impl PubSub {
         self.runtime.broadcast(topic, message)
     }
 
+    /// Registers host capability metadata that should be reported by
+    /// `bridge.capabilities`.
+    ///
+    /// This is the small explicit registration seam for host integrations. It
+    /// augments the built-in bridge-core registry; it does not replace it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the namespace descriptor is invalid, duplicates a
+    /// built-in namespace, or has already been registered for this connection.
+    pub fn register_capability(&self, descriptor: crate::CapabilityNamespace) -> io::Result<()> {
+        self.broker.register_capability(descriptor)
+    }
+
+    /// Registers a host operation handler that the internal broker may
+    /// dispatch for later bridge calls such as `opener.open`.
+    ///
+    /// Built-in bridge-core operations such as `bridge.echo` and
+    /// `bridge.capabilities` remain owned by the core broker and cannot be
+    /// replaced through this seam.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `operation` is invalid, targets a built-in bridge
+    /// operation, or is already registered for this connection.
+    pub fn register_operation_handler<F>(&self, operation: &str, handler: F) -> io::Result<()>
+    where
+        F: Fn(&[u8]) -> Result<Vec<u8>, String> + Send + Sync + 'static,
+    {
+        self.broker.register_operation_handler(operation, handler)
+    }
+
     // TODO: not documented, used just for testing for now.
     #[doc(hidden)]
     pub fn wait(&self) {
         self.runtime.wait();
     }
 
-    const fn from_runtime(runtime: Runtime) -> Self {
-        Self { runtime }
+    fn from_runtime(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            broker: broker::State::new(),
+        }
+    }
+
+    pub(crate) fn broker_state(&self) -> broker::State {
+        self.broker.clone()
     }
 }

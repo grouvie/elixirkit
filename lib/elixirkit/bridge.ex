@@ -103,9 +103,11 @@ defmodule ElixirKit.Bridge do
   Returns capability truth for the current bridge connection.
 
   This reports action-level availability and permission state separately. It is
-  feature discovery, not authorization, and today it exposes only the small
-  built-in bridge-core registry. That registry is still internal and
-  core-owned; external capability registration comes later.
+  feature discovery, not authorization. It includes the small built-in
+  bridge-core registry plus any host capability namespaces that were explicitly
+  registered on the Rust side for this connection. Registration is still
+  intentional and app-owned at this stage; this is not the later plugin
+  rollout yet.
   """
   @spec capabilities() :: capabilities_result()
   def capabilities do
@@ -125,9 +127,11 @@ defmodule ElixirKit.Bridge do
   Performs a brokered bridge call over the current structured bridge topic.
 
   This keeps using the same TCP `PubSub` transport underneath. For now the
-  built-in Rust broker handles only `bridge.echo`, which returns the same body
-  bytes it receives. A shared internal router process per bridge server keeps
-  track of pending requests and matches responses by `request_id`.
+  built-in Rust broker handles bridge-core operations such as `bridge.echo`
+  and `bridge.capabilities`, and explicitly registered host handlers can serve
+  additional operations such as `opener.open`. A shared internal router process
+  per bridge server keeps track of pending requests and matches responses by
+  `request_id`.
   """
   @spec call(operation(), binary()) :: call_result()
   def call(operation, body) do

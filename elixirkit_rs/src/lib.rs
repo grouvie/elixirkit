@@ -5,9 +5,12 @@
 //! through a stable public compatibility layer. Structured bridge envelopes now
 //! layer over one reserved internal topic on top of that same transport, and a
 //! small internal broker now handles correlated request/response for bridge-core
-//! operations. A tiny built-in capability registry can now answer feature-truth
-//! lookups over that same broker path. The command helpers still build
-//! correctly configured [`Command`] values for common Elixir entry points.
+//! operations. A small capability registry can now answer feature-truth
+//! lookups over that same broker path and aggregate explicitly registered host
+//! capabilities. Host operation handlers can also be registered through
+//! [`PubSub`] while the transport and outer envelope stay the same. The command
+//! helpers still build correctly configured [`Command`] values for common
+//! Elixir entry points.
 
 use std::path::Path;
 use std::process::Command;
@@ -18,6 +21,11 @@ pub(crate) mod protocol;
 mod pubsub;
 mod runtime;
 
+pub use capabilities::{
+    ActionDescriptor as CapabilityAction, Availability as ActionAvailability,
+    BackingKind as CapabilityBacking, NamespaceDescriptor as CapabilityNamespace,
+    PermissionState as CapabilityPermission,
+};
 pub use pubsub::PubSub;
 
 /// Returns a command for running `elixir`.

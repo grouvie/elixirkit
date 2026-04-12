@@ -149,15 +149,17 @@ Brokered request/response also uses that same connection via
 bridge connection, implemented internally as `ElixirKit.Bridge.Router`, and
 matches responses by request id on the reserved bridge topic. Today that path
 is intentionally narrow: the built-in core-owned operations are still just
-`bridge.echo` and `bridge.capabilities`, and the example app below still uses
-the raw `"ready"` topic flow unchanged.
+`bridge.echo` and `bridge.capabilities`, while explicitly registered host
+operations can now extend that path one namespace at a time. The example app
+below still uses the raw `"ready"` topic flow unchanged.
 
 Capability lookup now rides over that same broker path with
 `ElixirKit.Bridge.capabilities/0`. The returned data is capability truth, not
 authorization: action-level availability is reported separately from permission
-state. At this milestone the registry is still internal, built-in, and
-core-owned, so this is not the plugin rollout yet and there is no external
-registration seam yet.
+state. At this milestone the registry aggregates the built-in bridge namespace
+with explicitly registered host namespaces. Registration is still explicit in
+`src-tauri/src/lib.rs`; this is not the later package split or omnibus plugin
+rollout yet.
 
 Next, let's add `elixirkit` to `Cargo.toml` dependencies. ElixirKit Hex package ships with the `elixirkit` crate inside so we can use a path dependency like this:
 
@@ -180,10 +182,16 @@ Let's change `tauri.conf.json` to not create any windows initially. We'll create
 - ],
 ```
 
-Finally, let's start Elixir from the Tauri app. Here's updated `src-tauri/src/lib.rs`:
+Finally, let's start Elixir from the Tauri app and register the first real host
+capability vertical slice. Here's updated `src-tauri/src/lib.rs`:
 
 ```rust
+use elixirkit::{
+    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityNamespace,
+    CapabilityPermission,
+};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -192,6 +200,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            register_opener(&pubsub, app.handle());
+
             let app_handle = app.handle().clone();
 
             pubsub.subscribe("messages", move |msg| {
@@ -218,6 +228,32 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+fn register_opener(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
+    pubsub
+        .register_capability(CapabilityNamespace::new(
+            "opener",
+            CapabilityBacking::TauriPlugin,
+            CapabilityPermission::NotApplicable,
+            vec![CapabilityAction::new("open", ActionAvailability::Available)],
+        ))
+        .expect("failed to register opener capability");
+
+    let app_handle = app_handle.clone();
+    pubsub
+        .register_operation_handler("opener.open", move |payload| {
+            let target = std::str::from_utf8(payload)
+                .map_err(|_| String::from("opener target must be valid UTF-8"))?;
+
+            app_handle
+                .opener()
+                .open_url(target, None::<&str>)
+                .map_err(|error| error.to_string())?;
+
+            Ok(Vec::new())
+        })
+        .expect("failed to register opener handler");
+}
+
 fn create_window(app_handle: &tauri::AppHandle) {
     let n = app_handle.webview_windows().len() + 1;
     let url = tauri::WebviewUrl::External("http://127.0.0.1:4000".parse().unwrap());
@@ -235,7 +271,12 @@ fn elixir_command() -> std::process::Command {
 }
 ```
 
-We subscribe to the `messages` PubSub topic. Once Elixir sends the `ready` message, we create a window pointing to our LiveView. Run the following to verify:
+We still subscribe to the `messages` PubSub topic exactly as before. Once
+Elixir sends the `ready` message, we create a window pointing to our LiveView.
+The new part is the explicit opener registration: the example app reports an
+`opener` namespace through `bridge.capabilities` and wires `opener.open` to
+Tauri's official opener plugin without hardcoding that capability into the
+bridge core. Run the following to verify:
 
 ```sh
 $ cargo tauri dev
