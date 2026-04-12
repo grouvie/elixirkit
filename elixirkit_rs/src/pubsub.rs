@@ -1,5 +1,6 @@
 use std::io;
 
+use crate::broker;
 use crate::runtime::Runtime;
 
 /// A handle to a `PubSub` connection.
@@ -31,13 +32,17 @@ impl PubSub {
     /// requested port, the local address cannot be queried, or the background
     /// reader thread cannot be started.
     pub fn listen(url: &str) -> Result<Self, io::Error> {
-        Runtime::listen(url).map(Self::from_runtime)
+        let pubsub = Runtime::listen(url).map(Self::from_runtime)?;
+        broker::attach(&pubsub);
+        Ok(pubsub)
     }
 
     // TODO: not documented, used just for testing for now.
     #[doc(hidden)]
     pub fn connect(url: &str) -> Result<Self, io::Error> {
-        Runtime::connect(url).map(Self::from_runtime)
+        let pubsub = Runtime::connect(url).map(Self::from_runtime)?;
+        broker::attach(&pubsub);
+        Ok(pubsub)
     }
 
     /// Returns the URL for this `PubSub` connection.

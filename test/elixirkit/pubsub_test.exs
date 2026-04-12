@@ -99,8 +99,7 @@ defmodule ElixirKit.PubSub.Test do
       const BRIDGE_TOPIC: &str = "__elixirkit_bridge__";
       const MAGIC: [u8; 4] = *b"EKBP";
       const VERSION: u8 = 1;
-      const KIND_REQUEST: u8 = 1;
-      const KIND_RESPONSE: u8 = 2;
+      const KIND_EVENT: u8 = 3;
 
       fn encode(kind: u8, request_id: &[u8], body: &[u8]) -> Vec<u8> {
           let request_id_len = u16::try_from(request_id.len()).expect("request id should fit in u16");
@@ -149,11 +148,11 @@ defmodule ElixirKit.PubSub.Test do
           let pubsub_for_bridge = pubsub.clone();
           pubsub.subscribe(BRIDGE_TOPIC, move |msg| {
               let (kind, request_id, body) = decode(msg).expect("bridge envelope should decode");
-              assert_eq!(kind, KIND_REQUEST, "expected request envelope");
-              assert_eq!(request_id, b"req-1", "expected request id");
-              assert_eq!(body, b"ping", "expected request body");
+              assert_eq!(kind, KIND_EVENT, "expected event envelope");
+              assert!(request_id.is_empty(), "event envelopes should not carry a request id");
+              assert_eq!(body, b"ping", "expected event body");
 
-              let response = encode(KIND_RESPONSE, &request_id, b"pong");
+              let response = encode(KIND_EVENT, b"", b"pong");
               pubsub_for_bridge.broadcast(BRIDGE_TOPIC, &response).unwrap();
           });
 
@@ -167,16 +166,14 @@ defmodule ElixirKit.PubSub.Test do
                 )
 
               ElixirKit.Bridge.Protocol.subscribe()
-              ElixirKit.Bridge.Protocol.broadcast(
-                ElixirKit.Bridge.Protocol.request("req-1", "ping")
-              )
+              ElixirKit.Bridge.Protocol.broadcast(ElixirKit.Bridge.Protocol.event("ping"))
 
               receive do
                 message ->
                   case ElixirKit.Bridge.Protocol.decode(message) do
                     {:ok, envelope} ->
-                      if envelope.__struct__ == ElixirKit.Bridge.Protocol.Response and
-                           envelope.request_id == "req-1" and envelope.body == "pong" do
+                      if envelope.__struct__ == ElixirKit.Bridge.Protocol.Event and
+                           envelope.body == "pong" do
                         IO.puts("got: pong")
                       else
                         IO.puts("unexpected: \#{inspect(envelope)}")
@@ -200,6 +197,46 @@ defmodule ElixirKit.PubSub.Test do
       """)
 
     assert_receive {^port, {:data, {:eol, "got: pong"}}}, 10_000
+    assert_receive {^port, {:exit_status, 0}}, 10_000
+  end
+
+  test "bridge.echo performs a brokered round trip against the rust side" do
+    port =
+      rust(~s"""
+      fn main() {
+          let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0")
+              .expect("failed to listen");
+
+          let code = r#"
+              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+
+              {:ok, _} =
+                ElixirKit.Bridge.start_link(
+                  connect: System.fetch_env!("ELIXIRKIT_PUBSUB"),
+                  on_exit: fn -> System.stop() end
+                )
+
+              case ElixirKit.Bridge.call("bridge.echo", "ping") do
+                {:ok, "ping"} ->
+                  IO.puts("got: ping")
+
+                other ->
+                  IO.puts("unexpected: \#{inspect(other)}")
+                  System.halt(1)
+              end
+          "#;
+
+          let status = elixirkit::elixir(&["-e", code])
+              .env("ELIXIRKIT_PUBSUB", pubsub.url())
+              .status()
+              .expect("failed to start Elixir");
+
+          pubsub.wait();
+          std::process::exit(status.code().unwrap_or(1));
+      }
+      """)
+
+    assert_receive {^port, {:data, {:eol, "got: ping"}}}, 10_000
     assert_receive {^port, {:exit_status, 0}}, 10_000
   end
 

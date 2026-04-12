@@ -18,6 +18,8 @@ defmodule ElixirKit.Bridge.Protocol do
   @request_kind 1
   @response_kind 2
   @event_kind 3
+  @call_result_ok 0
+  @call_result_error 1
 
   defmodule Request do
     @moduledoc false
@@ -193,6 +195,79 @@ defmodule ElixirKit.Bridge.Protocol do
     ElixirKit.Bridge.broadcast(server, topic(), encode!(envelope))
   end
 
+  @doc false
+  @spec encode_call_body(binary(), binary()) :: {:ok, binary()} | {:error, term()}
+  def encode_call_body(operation, payload)
+      when is_binary(operation) and is_binary(payload) do
+    with :ok <- validate_non_empty_operation(operation),
+         :ok <- validate_operation_length(operation) do
+      {:ok, <<byte_size(operation), operation::binary, payload::binary>>}
+    end
+  end
+
+  @doc false
+  @spec encode_call_body!(binary(), binary()) :: binary()
+  def encode_call_body!(operation, payload) do
+    case encode_call_body(operation, payload) do
+      {:ok, body} -> body
+      {:error, reason} -> raise ArgumentError, "invalid bridge call body: #{inspect(reason)}"
+    end
+  end
+
+  @doc false
+  @spec decode_call_body(binary()) :: {:ok, {binary(), binary()}} | {:error, term()}
+  def decode_call_body(<<operation_len, rest::binary>>) when byte_size(rest) >= operation_len do
+    <<operation::binary-size(operation_len), payload::binary>> = rest
+
+    with :ok <- validate_non_empty_operation(operation) do
+      {:ok, {operation, payload}}
+    end
+  end
+
+  def decode_call_body(<<>>), do: {:error, :missing_operation}
+  def decode_call_body(_body), do: {:error, :truncated_operation}
+
+  @doc false
+  @spec encode_call_result({:ok, binary()} | {:error, binary()}) ::
+          {:ok, binary()} | {:error, term()}
+  def encode_call_result({:ok, body}) when is_binary(body) do
+    {:ok, <<@call_result_ok, body::binary>>}
+  end
+
+  def encode_call_result({:error, reason}) when is_binary(reason) do
+    {:ok, <<@call_result_error, reason::binary>>}
+  end
+
+  def encode_call_result(_result), do: {:error, :invalid_call_result}
+
+  @doc false
+  @spec encode_call_result!({:ok, binary()} | {:error, binary()}) :: binary()
+  def encode_call_result!(result) do
+    case encode_call_result(result) do
+      {:ok, body} -> body
+      {:error, reason} -> raise ArgumentError, "invalid bridge call result: #{inspect(reason)}"
+    end
+  end
+
+  @doc false
+  @spec decode_call_result(binary()) ::
+          {:ok, {:ok, binary()} | {:error, binary()}} | {:error, term()}
+  def decode_call_result(<<@call_result_ok, body::binary>>) do
+    {:ok, {:ok, body}}
+  end
+
+  def decode_call_result(<<@call_result_error, reason::binary>>) do
+    {:ok, {:error, reason}}
+  end
+
+  def decode_call_result(<<status, _payload::binary>>) do
+    {:error, {:invalid_result_status, status}}
+  end
+
+  def decode_call_result(<<>>) do
+    {:error, :missing_result_status}
+  end
+
   defp encode_with_request_id(version, kind, request_id, body)
        when is_binary(request_id) and is_binary(body) do
     with :ok <- validate_version(version),
@@ -230,6 +305,12 @@ defmodule ElixirKit.Bridge.Protocol do
 
   defp validate_non_empty_request_id(<<>>), do: {:error, :missing_request_id}
   defp validate_non_empty_request_id(_request_id), do: :ok
+
+  defp validate_non_empty_operation(<<>>), do: {:error, :missing_operation}
+  defp validate_non_empty_operation(_operation), do: :ok
+
+  defp validate_operation_length(operation) when byte_size(operation) <= 255, do: :ok
+  defp validate_operation_length(_operation), do: {:error, :operation_too_large}
 
   defp validate_request_id_length(request_id) when byte_size(request_id) <= 65_535, do: :ok
   defp validate_request_id_length(_request_id), do: {:error, :request_id_too_large}

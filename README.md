@@ -71,6 +71,24 @@ Structured bridge envelopes now layer over one reserved internal topic on top
 of the same TCP PubSub transport. Existing raw topic/message broadcasts remain
 unchanged and fully backward compatible.
 
+For brokered request/response over that same connection, use
+`ElixirKit.Bridge.call/2` or `call/3`. The Elixir side keeps one shared
+internal router per bridge connection, subscribes to the reserved bridge topic
+once, and matches responses by opaque request id. Today the only built-in
+operation is `bridge.echo`, which exists as a small end-to-end proof path for
+later capability work:
+
+```elixir
+case ElixirKit.Bridge.call("bridge.echo", "ping") do
+  {:ok, "ping"} -> :ok
+  {:error, reason} -> IO.inspect(reason, label: "bridge call failed")
+end
+```
+
+This brokered call path still rides over the current TCP PubSub transport. It
+does not replace raw PubSub topics, and it does not introduce capability
+discovery, plugins, or any WebView-based bridge layer.
+
 ## License
 
 Copyright (C) 2026 Dashbit

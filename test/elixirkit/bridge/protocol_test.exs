@@ -54,4 +54,19 @@ defmodule ElixirKit.Bridge.Protocol.Test do
 
     assert {:error, :invalid_lengths} = Protocol.decode(encoded <> <<0>>)
   end
+
+  test "call bodies round trip an operation and opaque payload" do
+    assert {:ok, body} = Protocol.encode_call_body("bridge.echo", <<1, 2, 3>>)
+    assert {:ok, {"bridge.echo", <<1, 2, 3>>}} = Protocol.decode_call_body(body)
+  end
+
+  test "call results round trip success payloads" do
+    assert {:ok, body} = Protocol.encode_call_result({:ok, "pong"})
+    assert {:ok, {:ok, "pong"}} = Protocol.decode_call_result(body)
+  end
+
+  test "call results round trip error payloads" do
+    assert {:ok, body} = Protocol.encode_call_result({:error, "unsupported operation"})
+    assert {:ok, {:error, "unsupported operation"}} = Protocol.decode_call_result(body)
+  end
 end

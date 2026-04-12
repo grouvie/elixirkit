@@ -10,6 +10,11 @@ defmodule ElixirKit.Bridge do
   `ElixirKit.Bridge.Protocol`, but raw topic/message PubSub usage remains fully
   backward compatible.
 
+  Brokered request/response calls now reuse one shared internal router per
+  bridge connection. That router subscribes to the reserved bridge topic once
+  and matches responses by `request_id`, while ordinary PubSub traffic stays
+  unchanged.
+
   No NIF-backed bridge, mobile runtime, or capability/plugin architecture is
   introduced here yet. `ElixirKit.PubSub` remains fully supported and backward
   compatible; `ElixirKit.Bridge` simply gives Elixir code a forward-compatible
@@ -31,6 +36,8 @@ defmodule ElixirKit.Bridge do
 
   @type topic() :: ElixirKit.PubSub.topic()
   @type message() :: ElixirKit.PubSub.message()
+  @type operation() :: String.t()
+  @type call_result() :: {:ok, binary()} | {:error, term()}
 
   @doc """
   Starts the bridge and links it to the current process.
@@ -89,9 +96,76 @@ defmodule ElixirKit.Bridge do
     ElixirKit.PubSub.broadcast(server, topic, message)
   end
 
+  @doc """
+  Performs a brokered bridge call over the current structured bridge topic.
+
+  This keeps using the same TCP `PubSub` transport underneath. For now the
+  built-in Rust broker handles only `bridge.echo`, which returns the same body
+  bytes it receives. A shared internal router process per bridge server keeps
+  track of pending requests and matches responses by `request_id`.
+  """
+  @spec call(operation(), binary()) :: call_result()
+  def call(operation, body) do
+    call(operation, body, 5_000)
+  end
+
+  @doc """
+  Performs a brokered bridge call with the given timeout in milliseconds.
+  """
+  @spec call(operation(), binary(), non_neg_integer()) :: call_result()
+  def call(operation, body, timeout) do
+    call(__MODULE__, operation, body, timeout)
+  end
+
+  @doc false
+  @spec call(atom(), operation(), binary(), non_neg_integer()) :: call_result()
+  def call(server, operation, body, timeout)
+      when is_atom(server) and is_binary(operation) and is_binary(body) and is_integer(timeout) and
+             timeout >= 0 do
+    request_id = new_request_id()
+    reply_ref = make_ref()
+
+    with {:ok, request_body} <- ElixirKit.Bridge.Protocol.encode_call_body(operation, body),
+         :ok <- ElixirKit.Bridge.Router.register(server, request_id, self(), reply_ref) do
+      ElixirKit.Bridge.Protocol.broadcast(
+        server,
+        ElixirKit.Bridge.Protocol.request(request_id, request_body)
+      )
+
+      await_call_reply(server, request_id, reply_ref, timeout)
+    end
+  end
+
   @doc false
   @spec url(atom()) :: String.t()
   def url(server) do
     ElixirKit.PubSub.url(server)
+  end
+
+  defp await_call_reply(server, request_id, reply_ref, timeout) do
+    receive do
+      {^reply_ref, {:ok, _body} = result} ->
+        result
+
+      {^reply_ref, {:error, _reason} = result} ->
+        result
+    after
+      timeout ->
+        ElixirKit.Bridge.Router.cancel(server, request_id, reply_ref)
+        flush_call_reply(reply_ref)
+        {:error, :timeout}
+    end
+  end
+
+  defp flush_call_reply(reply_ref) do
+    receive do
+      {^reply_ref, _result} -> :ok
+    after
+      0 -> :ok
+    end
+  end
+
+  defp new_request_id do
+    <<System.unique_integer([:monotonic, :positive])::unsigned-big-integer-size(64)>>
   end
 end
