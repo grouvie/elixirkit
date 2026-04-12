@@ -67,6 +67,10 @@ This is an incremental bridge seam, not a rewrite. No NIF-backed bridge,
 mobile runtime, or capability/plugin architecture is being introduced yet, and
 `ElixirKit.PubSub` remains fully supported for direct use.
 
+Structured bridge envelopes now layer over one reserved internal topic on top
+of the same TCP PubSub transport. Existing raw topic/message broadcasts remain
+unchanged and fully backward compatible.
+
 ## License
 
 Copyright (C) 2026 Dashbit

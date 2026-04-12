@@ -140,7 +140,9 @@ This is an incremental seam on the Elixir side only. Today `ElixirKit.Bridge`
 still uses the same TCP `ElixirKit.PubSub` transport underneath, so the
 environment variable and transport behavior do not change. No NIF-backed
 bridge, mobile runtime, or capability/plugin architecture is being introduced
-yet.
+yet. Structured bridge envelopes now layer over one reserved internal topic on
+top of that same transport, while raw topic/message PubSub usage remains
+unchanged.
 
 Next, let's add `elixirkit` to `Cargo.toml` dependencies. ElixirKit Hex package ships with the `elixirkit` crate inside so we can use a path dependency like this:
 

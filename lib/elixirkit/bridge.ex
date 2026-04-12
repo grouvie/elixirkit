@@ -6,6 +6,10 @@ defmodule ElixirKit.Bridge do
   still the existing local TCP `PubSub` connection. This is an incremental seam
   for Elixir application code, not a rewrite of transport or lifecycle.
 
+  Structured bridge envelopes now layer over one reserved internal topic via
+  `ElixirKit.Bridge.Protocol`, but raw topic/message PubSub usage remains fully
+  backward compatible.
+
   No NIF-backed bridge, mobile runtime, or capability/plugin architecture is
   introduced here yet. `ElixirKit.PubSub` remains fully supported and backward
   compatible; `ElixirKit.Bridge` simply gives Elixir code a forward-compatible

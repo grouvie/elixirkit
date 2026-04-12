@@ -93,6 +93,116 @@ defmodule ElixirKit.PubSub.Test do
     assert_receive {^port, {:exit_status, 0}}, 10_000
   end
 
+  test "structured bridge envelope traverses the existing transport (rust)" do
+    port =
+      rust(~s"""
+      const BRIDGE_TOPIC: &str = "__elixirkit_bridge__";
+      const MAGIC: [u8; 4] = *b"EKBP";
+      const VERSION: u8 = 1;
+      const KIND_REQUEST: u8 = 1;
+      const KIND_RESPONSE: u8 = 2;
+
+      fn encode(kind: u8, request_id: &[u8], body: &[u8]) -> Vec<u8> {
+          let request_id_len = u16::try_from(request_id.len()).expect("request id should fit in u16");
+          let body_len = u32::try_from(body.len()).expect("body should fit in u32");
+          let mut bytes = Vec::with_capacity(12 + request_id.len() + body.len());
+          bytes.extend_from_slice(&MAGIC);
+          bytes.push(VERSION);
+          bytes.push(kind);
+          bytes.extend_from_slice(&request_id_len.to_be_bytes());
+          bytes.extend_from_slice(&body_len.to_be_bytes());
+          bytes.extend_from_slice(request_id);
+          bytes.extend_from_slice(body);
+          bytes
+      }
+
+      fn decode(bytes: &[u8]) -> Result<(u8, Vec<u8>, Vec<u8>), &'static str> {
+          if bytes.len() < 12 {
+              return Err("truncated");
+          }
+          if bytes[..4] != MAGIC {
+              return Err("invalid magic");
+          }
+          if bytes[4] != VERSION {
+              return Err("invalid version");
+          }
+
+          let kind = bytes[5];
+          let request_id_len = usize::from(u16::from_be_bytes([bytes[6], bytes[7]]));
+          let body_len = usize::try_from(u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]))
+              .expect("body length should fit in usize");
+          let expected_len = 12 + request_id_len + body_len;
+
+          if bytes.len() != expected_len {
+              return Err("invalid lengths");
+          }
+
+          let request_id = bytes[12..12 + request_id_len].to_vec();
+          let body = bytes[12 + request_id_len..].to_vec();
+          Ok((kind, request_id, body))
+      }
+
+      fn main() {
+          let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0")
+              .expect("failed to listen");
+
+          let pubsub_for_bridge = pubsub.clone();
+          pubsub.subscribe(BRIDGE_TOPIC, move |msg| {
+              let (kind, request_id, body) = decode(msg).expect("bridge envelope should decode");
+              assert_eq!(kind, KIND_REQUEST, "expected request envelope");
+              assert_eq!(request_id, b"req-1", "expected request id");
+              assert_eq!(body, b"ping", "expected request body");
+
+              let response = encode(KIND_RESPONSE, &request_id, b"pong");
+              pubsub_for_bridge.broadcast(BRIDGE_TOPIC, &response).unwrap();
+          });
+
+          let code = r#"
+              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+
+              {:ok, _} =
+                ElixirKit.Bridge.start_link(
+                  connect: System.fetch_env!("ELIXIRKIT_PUBSUB"),
+                  on_exit: fn -> System.stop() end
+                )
+
+              ElixirKit.Bridge.Protocol.subscribe()
+              ElixirKit.Bridge.Protocol.broadcast(
+                ElixirKit.Bridge.Protocol.request("req-1", "ping")
+              )
+
+              receive do
+                message ->
+                  case ElixirKit.Bridge.Protocol.decode(message) do
+                    {:ok, envelope} ->
+                      if envelope.__struct__ == ElixirKit.Bridge.Protocol.Response and
+                           envelope.request_id == "req-1" and envelope.body == "pong" do
+                        IO.puts("got: pong")
+                      else
+                        IO.puts("unexpected: \#{inspect(envelope)}")
+                        System.halt(1)
+                      end
+
+                    other ->
+                      IO.puts("unexpected: \#{inspect(other)}")
+                      System.halt(1)
+                  end
+              end
+          "#;
+
+          let status = elixirkit::elixir(&["-e", code])
+              .env("ELIXIRKIT_PUBSUB", pubsub.url())
+              .status()
+              .expect("failed to start Elixir");
+
+          std::process::exit(status.code().unwrap_or(1));
+      }
+      """)
+
+    assert_receive {^port, {:data, {:eol, "got: pong"}}}, 10_000
+    assert_receive {^port, {:exit_status, 0}}, 10_000
+  end
+
   test "exit status propagates" do
     port =
       rust(~s"""

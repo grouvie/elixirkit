@@ -2,12 +2,15 @@
 //! Elixir process.
 //!
 //! [`PubSub`] provides a lightweight framed TCP transport for message exchange
-//! through a stable public compatibility layer, while the command helpers build
-//! correctly configured [`Command`] values for common Elixir entry points.
+//! through a stable public compatibility layer. Structured bridge envelopes now
+//! layer over one reserved internal topic on top of that same transport, while
+//! the command helpers build correctly configured [`Command`] values for common
+//! Elixir entry points.
 
 use std::path::Path;
 use std::process::Command;
 
+pub(crate) mod protocol;
 mod pubsub;
 mod runtime;
 
