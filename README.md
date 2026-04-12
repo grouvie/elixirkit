@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/livebook-dev/elixirkit/actions/workflows/test.yml/badge.svg)](https://github.com/livebook-dev/elixirkit/actions/workflows/test.yml)
 
-Run Elixir from Rust/Tauri apps and exchange messages over [PubSub].
+Run Elixir from Rust/Tauri apps and exchange messages over the current TCP [PubSub] transport.
 
 See ["Building Desktop Apps with Tauri"](guides/tauri.md) for a step-by-step guide for using ElixirKit with Phoenix LiveView and [Tauri](https://tauri.app).
 
@@ -38,30 +38,34 @@ let status = elixirkit::elixir(&["script.exs"])
 std::process::exit(status.code().unwrap_or(1));
 ```
 
-On the Elixir side, start [`ElixirKit.PubSub`] under a supervision tree and use
-[`ElixirKit.PubSub.subscribe/1`] to listen to messages and
-[`ElixirKit.PubSub.broadcast/2`] to send messages to the Rust side:
+On the Elixir side, prefer [`ElixirKit.Bridge`] as the application-facing entrypoint.
+Today it is a thin delegation layer over [`ElixirKit.PubSub`], so the public
+transport is still the same TCP PubSub connection:
 
 ```elixir
 # script.exs
 Mix.install([{:elixirkit, github: "livebook-dev/elixirkit"}])
 
 children = [
-  {ElixirKit.PubSub,
+  {ElixirKit.Bridge,
    connect: System.get_env("ELIXIRKIT_PUBSUB") || :ignore,
    on_exit: &System.stop/0}
 ]
 
 {:ok, _} = Supervisor.start_link(children, strategy: :one_for_one)
 
-ElixirKit.PubSub.subscribe("topic")
-ElixirKit.PubSub.broadcast("topic", "ping")
+ElixirKit.Bridge.subscribe("topic")
+ElixirKit.Bridge.broadcast("topic", "ping")
 
 receive do
   message ->
     IO.puts(["[elixir] ", inspect(message)])
 end
 ```
+
+This is an incremental bridge seam, not a rewrite. No NIF-backed bridge,
+mobile runtime, or capability/plugin architecture is being introduced yet, and
+`ElixirKit.PubSub` remains fully supported for direct use.
 
 ## License
 
@@ -78,9 +82,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 [PubSub]:                         https://hexdocs.pm/elixirkit/ElixirKit.PubSub.html
+[`ElixirKit.Bridge`]:             https://hexdocs.pm/elixirkit/ElixirKit.Bridge.html
 [`ElixirKit.PubSub`]:             https://hexdocs.pm/elixirkit/ElixirKit.PubSub.html
-[`ElixirKit.PubSub.subscribe/1`]: https://hexdocs.pm/elixirkit/ElixirKit.PubSub.html#subscribe/1
-[`ElixirKit.PubSub.broadcast/2`]: https://hexdocs.pm/elixirkit/ElixirKit.PubSub.html#broadcast/2
 
 [`elixirkit_rs`]:                 https://hexdocs.pm/elixirkit/rs/elixirkit/index.html
 [`elixirkit::elixir`]:            https://hexdocs.pm/elixirkit/rs/elixirkit/fn.elixir.html

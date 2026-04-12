@@ -113,7 +113,7 @@ First, let's add ElixirKit to mix.exs dependencies:
 
 and run `mix deps.get`.
 
-Next, add `ElixirKit.PubSub` to supervision tree:
+Next, add `ElixirKit.Bridge` to supervision tree:
 
 ```diff
 + pubsub = System.get_env("ELIXIRKIT_PUBSUB")
@@ -121,20 +121,26 @@ Next, add `ElixirKit.PubSub` to supervision tree:
   children = [
     ...
     {Phoenix.PubSub, name: Example.PubSub},
-+   {ElixirKit.PubSub,
++   {ElixirKit.Bridge,
 +    connect: pubsub || :ignore,
 +    on_exit: fn -> System.stop() end},
     ExampleWeb.Endpoint,
 +   {Task,
 +    fn ->
 +      if pubsub do
-+        ElixirKit.PubSub.broadcast("messages", "ready")
++        ElixirKit.Bridge.broadcast("messages", "ready")
 +      end
 +    end}
   ]
 ```
 
-If `ELIXIRKIT_PUBSUB` env var is set, which we will from our Tauri app, we connect to PubSub and send a ready message. Otherwise, we start `ElixirKit.PubSub` with `connect: :ignore` which does nothing -- this way we can develop and test the Phoenix side in isolation.
+If `ELIXIRKIT_PUBSUB` env var is set, which we will from our Tauri app, we connect to the bridge and send a ready message. Otherwise, we start `ElixirKit.Bridge` with `connect: :ignore` which does nothing, so we can develop and test the Phoenix side in isolation.
+
+This is an incremental seam on the Elixir side only. Today `ElixirKit.Bridge`
+still uses the same TCP `ElixirKit.PubSub` transport underneath, so the
+environment variable and transport behavior do not change. No NIF-backed
+bridge, mobile runtime, or capability/plugin architecture is being introduced
+yet.
 
 Next, let's add `elixirkit` to `Cargo.toml` dependencies. ElixirKit Hex package ships with the `elixirkit` crate inside so we can use a path dependency like this:
 
@@ -224,7 +230,7 @@ We can add more broadcasts from either side. For example, let's broadcast a mess
   @impl true
   def handle_event("inc", _params, socket) do
     count = socket.assigns.count + 1
-+   ElixirKit.PubSub.broadcast("messages", "count:#{count}")
++   ElixirKit.Bridge.broadcast("messages", "count:#{count}")
     {:noreply, assign(socket, count: count)}
   end
 ```

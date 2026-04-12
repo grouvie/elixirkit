@@ -1,14 +1,15 @@
 //! Helpers for launching Elixir tooling and exchanging messages with a local
 //! Elixir process.
 //!
-//! [`PubSub`] provides a lightweight framed TCP transport for message exchange,
-//! while the command helpers build correctly configured [`Command`] values for
-//! common Elixir entry points.
+//! [`PubSub`] provides a lightweight framed TCP transport for message exchange
+//! through a stable public compatibility layer, while the command helpers build
+//! correctly configured [`Command`] values for common Elixir entry points.
 
 use std::path::Path;
 use std::process::Command;
 
 mod pubsub;
+mod runtime;
 
 pub use pubsub::PubSub;
 

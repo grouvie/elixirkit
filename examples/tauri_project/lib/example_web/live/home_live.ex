@@ -21,7 +21,7 @@ defmodule ExampleWeb.HomeLive do
   @impl true
   def handle_event("inc", _params, socket) do
     count = socket.assigns.count + 1
-    ElixirKit.PubSub.broadcast("messages", "count:#{count}")
+    ElixirKit.Bridge.broadcast("messages", "count:#{count}")
     {:noreply, assign(socket, count: count)}
   end
 end

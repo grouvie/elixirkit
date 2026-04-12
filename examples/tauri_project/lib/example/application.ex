@@ -7,7 +7,7 @@ defmodule Example.Application do
 
   @impl true
   def start(_type, _args) do
-    pubsub = System.get_env("ELIXIRKIT_PUBSUB")
+    pubsub_url = System.get_env("ELIXIRKIT_PUBSUB")
 
     children = [
       ExampleWeb.Telemetry,
@@ -16,12 +16,12 @@ defmodule Example.Application do
       # Start a worker by calling: Example.Worker.start_link(arg)
       # {Example.Worker, arg},
       # Start to serve requests, typically the last entry
-      {ElixirKit.PubSub, connect: pubsub || :ignore, on_exit: fn -> System.stop() end},
+      {ElixirKit.Bridge, connect: pubsub_url || :ignore, on_exit: fn -> System.stop() end},
       ExampleWeb.Endpoint,
       {Task,
        fn ->
-         if pubsub do
-           ElixirKit.PubSub.broadcast("messages", "ready")
+         if pubsub_url do
+           ElixirKit.Bridge.broadcast("messages", "ready")
          end
        end}
     ]

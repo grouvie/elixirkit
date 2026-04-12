@@ -4,6 +4,10 @@ defmodule ElixirKit.PubSub do
 
   PubSub is designed to be started alongside [`elixirkit::PubSub`] from a native app.
 
+  For forward-compatible Elixir application code, prefer `ElixirKit.Bridge`,
+  which currently delegates here. `ElixirKit.PubSub` remains the concrete TCP
+  transport module and stays fully backward compatible.
+
   Subscribes and broadcasts are always unidirectional, that is, an Elixir process will not receive
   their own broadcasts.
 
