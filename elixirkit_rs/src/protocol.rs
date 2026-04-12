@@ -3,9 +3,9 @@
 //! This keeps the framed TCP transport exactly as it is today while reserving
 //! one internal topic for structured bridge messages. The envelope body stays
 //! opaque bytes for now. This module also owns the narrow internal call
-//! body/result encoding used by the current broker so the bridge wire format
-//! stays in one place; request tracking and capability routing still live
-//! elsewhere.
+//! body/result encoding and small capability-discovery body encoding used by
+//! the current broker so the bridge wire format stays in one place; request
+//! tracking and registry ownership still live elsewhere.
 #![expect(
     dead_code,
     reason = "The protocol seam is staged for later bridge-core integration before public call or dispatch APIs exist"
@@ -19,6 +19,9 @@ use std::io;
 use std::str;
 
 use crate::PubSub;
+use crate::capabilities::{
+    ActionDescriptor, Availability, BackingKind, NamespaceDescriptor, PermissionState,
+};
 
 const MAGIC: [u8; 4] = *b"EKBP";
 const KIND_REQUEST: u8 = 1;
@@ -26,6 +29,17 @@ const KIND_RESPONSE: u8 = 2;
 const KIND_EVENT: u8 = 3;
 const CALL_RESULT_OK: u8 = 0;
 const CALL_RESULT_ERROR: u8 = 1;
+const BACKING_CORE: u8 = 0;
+const BACKING_TAURI_PLUGIN: u8 = 1;
+const BACKING_TAURI_CORE: u8 = 2;
+const PERMISSION_NOT_APPLICABLE: u8 = 0;
+const PERMISSION_GRANTED: u8 = 1;
+const PERMISSION_DENIED: u8 = 2;
+const PERMISSION_PROMPT: u8 = 3;
+const AVAILABILITY_AVAILABLE: u8 = 0;
+const AVAILABILITY_UNAVAILABLE: u8 = 1;
+const AVAILABILITY_UNSUPPORTED: u8 = 2;
+const AVAILABILITY_UNSUPPORTED_PLATFORM: u8 = 3;
 const HEADER_LEN: usize = MAGIC.len() + 1 + 1 + 2 + 4;
 
 /// Reserved internal topic for structured bridge envelopes.
@@ -365,6 +379,106 @@ pub(crate) fn decode_call_result(bytes: &[u8]) -> io::Result<CallResult<'_>> {
     }
 }
 
+pub(crate) fn encode_capabilities(namespaces: &[NamespaceDescriptor]) -> io::Result<Vec<u8>> {
+    let namespace_count = u16::try_from(namespaces.len())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&namespace_count.to_be_bytes());
+
+    for namespace in namespaces {
+        encode_name(&namespace.namespace, &mut bytes)?;
+        bytes.push(encode_backing(namespace.backing));
+        bytes.push(encode_permission(namespace.permission));
+
+        let action_count = u16::try_from(namespace.actions.len())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        bytes.extend_from_slice(&action_count.to_be_bytes());
+
+        for action in &namespace.actions {
+            encode_name(&action.name, &mut bytes)?;
+            bytes.push(encode_availability(action.availability));
+        }
+    }
+
+    Ok(bytes)
+}
+
+pub(crate) fn decode_capabilities(bytes: &[u8]) -> io::Result<Vec<NamespaceDescriptor>> {
+    let Some((namespace_count_bytes, mut rest)) = bytes.split_at_checked(2) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capabilities body is truncated",
+        ));
+    };
+    let namespace_count = usize::from(u16::from_be_bytes(
+        namespace_count_bytes.try_into().map_err(|_error| {
+            io::Error::new(io::ErrorKind::InvalidData, "capabilities body is truncated")
+        })?,
+    ));
+
+    let mut namespaces = Vec::with_capacity(namespace_count);
+
+    for _index in 0..namespace_count {
+        let (namespace, next_rest) = take_name(rest)?;
+        let Some((&backing, next_rest)) = next_rest.split_first() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "capabilities body is truncated",
+            ));
+        };
+        let Some((&permission, next_rest)) = next_rest.split_first() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "capabilities body is truncated",
+            ));
+        };
+        let Some((action_count_bytes, mut next_rest)) = next_rest.split_at_checked(2) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "capabilities body is truncated",
+            ));
+        };
+        let action_count = usize::from(u16::from_be_bytes(action_count_bytes.try_into().map_err(
+            |_error| io::Error::new(io::ErrorKind::InvalidData, "capabilities body is truncated"),
+        )?));
+
+        let mut actions = Vec::with_capacity(action_count);
+        for _action_index in 0..action_count {
+            let (action_name, action_rest) = take_name(next_rest)?;
+            let Some((&availability, action_rest)) = action_rest.split_first() else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "capabilities body is truncated",
+                ));
+            };
+
+            actions.push(ActionDescriptor {
+                name: action_name.to_owned(),
+                availability: decode_availability(availability)?,
+            });
+            next_rest = action_rest;
+        }
+
+        namespaces.push(NamespaceDescriptor {
+            namespace: namespace.to_owned(),
+            backing: decode_backing(backing)?,
+            permission: decode_permission(permission)?,
+            actions,
+        });
+        rest = next_rest;
+    }
+
+    if rest.is_empty() {
+        Ok(namespaces)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capabilities body has trailing bytes",
+        ))
+    }
+}
+
 fn encode_with_request_id(
     version: u8,
     kind: u8,
@@ -449,11 +563,129 @@ fn validate_non_empty_operation(operation: &str) -> io::Result<()> {
     }
 }
 
+fn validate_non_empty_name(name: &str, context: &'static str) -> io::Result<()> {
+    if name.is_empty() {
+        Err(io::Error::new(io::ErrorKind::InvalidInput, context))
+    } else {
+        Ok(())
+    }
+}
+
+fn encode_name(name: &str, bytes: &mut Vec<u8>) -> io::Result<()> {
+    validate_non_empty_name(name, "capability names must not be empty")?;
+
+    let name_len = u8::try_from(name.len())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    bytes.push(name_len);
+    bytes.extend_from_slice(name.as_bytes());
+    Ok(())
+}
+
+fn take_name(bytes: &[u8]) -> io::Result<(&str, &[u8])> {
+    let Some((&name_len, rest)) = bytes.split_first() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capabilities body is truncated",
+        ));
+    };
+
+    if name_len == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capability names must not be empty",
+        ));
+    }
+
+    let Some((name, rest)) = rest.split_at_checked(usize::from(name_len)) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capabilities body is truncated",
+        ));
+    };
+    let name = str::from_utf8(name).map_err(|_error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capability names must be valid UTF-8",
+        )
+    })?;
+
+    Ok((name, rest))
+}
+
+const fn encode_backing(backing: BackingKind) -> u8 {
+    match backing {
+        BackingKind::Core => BACKING_CORE,
+        BackingKind::TauriPlugin => BACKING_TAURI_PLUGIN,
+        BackingKind::TauriCore => BACKING_TAURI_CORE,
+    }
+}
+
+fn decode_backing(backing: u8) -> io::Result<BackingKind> {
+    match backing {
+        BACKING_CORE => Ok(BackingKind::Core),
+        BACKING_TAURI_PLUGIN => Ok(BackingKind::TauriPlugin),
+        BACKING_TAURI_CORE => Ok(BackingKind::TauriCore),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid capability backing {backing}"),
+        )),
+    }
+}
+
+const fn encode_permission(permission: PermissionState) -> u8 {
+    match permission {
+        PermissionState::NotApplicable => PERMISSION_NOT_APPLICABLE,
+        PermissionState::Granted => PERMISSION_GRANTED,
+        PermissionState::Denied => PERMISSION_DENIED,
+        PermissionState::Prompt => PERMISSION_PROMPT,
+    }
+}
+
+fn decode_permission(permission: u8) -> io::Result<PermissionState> {
+    match permission {
+        PERMISSION_NOT_APPLICABLE => Ok(PermissionState::NotApplicable),
+        PERMISSION_GRANTED => Ok(PermissionState::Granted),
+        PERMISSION_DENIED => Ok(PermissionState::Denied),
+        PERMISSION_PROMPT => Ok(PermissionState::Prompt),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid capability permission {permission}"),
+        )),
+    }
+}
+
+const fn encode_availability(availability: Availability) -> u8 {
+    match availability {
+        Availability::Available => AVAILABILITY_AVAILABLE,
+        Availability::Unavailable => AVAILABILITY_UNAVAILABLE,
+        Availability::Unsupported => AVAILABILITY_UNSUPPORTED,
+        Availability::UnsupportedPlatform => AVAILABILITY_UNSUPPORTED_PLATFORM,
+    }
+}
+
+fn decode_availability(availability: u8) -> io::Result<Availability> {
+    match availability {
+        AVAILABILITY_AVAILABLE => Ok(Availability::Available),
+        AVAILABILITY_UNAVAILABLE => Ok(Availability::Unavailable),
+        AVAILABILITY_UNSUPPORTED => Ok(Availability::Unsupported),
+        AVAILABILITY_UNSUPPORTED_PLATFORM => Ok(Availability::UnsupportedPlatform),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid action availability {availability}"),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::capabilities::{
+        ActionDescriptor, Availability, BackingKind, NamespaceDescriptor, PermissionState,
+    };
+
     use super::{
         CallResult, Envelope, EventEnvelope, RequestEnvelope, ResponseEnvelope, decode,
-        decode_call_body, decode_call_result, encode, encode_call_body, encode_call_result,
+        decode_call_body, decode_call_result, decode_capabilities, encode, encode_call_body,
+        encode_call_result, encode_capabilities,
     };
 
     #[test]
@@ -511,5 +743,40 @@ mod tests {
         let decoded = decode_call_result(&encoded).expect("call result should decode");
 
         assert_eq!(decoded, CallResult::Error(b"unsupported operation"));
+    }
+
+    #[test]
+    fn capabilities_round_trip() {
+        let capabilities = vec![
+            NamespaceDescriptor {
+                namespace: "bridge".to_owned(),
+                backing: BackingKind::Core,
+                permission: PermissionState::NotApplicable,
+                actions: vec![
+                    ActionDescriptor {
+                        name: "echo".to_owned(),
+                        availability: Availability::Available,
+                    },
+                    ActionDescriptor {
+                        name: "capabilities".to_owned(),
+                        availability: Availability::Available,
+                    },
+                ],
+            },
+            NamespaceDescriptor {
+                namespace: "clipboard".to_owned(),
+                backing: BackingKind::TauriPlugin,
+                permission: PermissionState::Prompt,
+                actions: vec![ActionDescriptor {
+                    name: "read_text".to_owned(),
+                    availability: Availability::UnsupportedPlatform,
+                }],
+            },
+        ];
+
+        let encoded = encode_capabilities(&capabilities).expect("capabilities should encode");
+        let decoded = decode_capabilities(&encoded).expect("capabilities should decode");
+
+        assert_eq!(decoded, capabilities);
     }
 }

@@ -240,6 +240,57 @@ defmodule ElixirKit.PubSub.Test do
     assert_receive {^port, {:exit_status, 0}}, 10_000
   end
 
+  test "bridge.capabilities returns built-in capability truth against the rust side" do
+    port =
+      rust(~s"""
+      fn main() {
+          let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0")
+              .expect("failed to listen");
+
+          let code = r#"
+              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+
+              {:ok, _} =
+                ElixirKit.Bridge.start_link(
+                  connect: System.fetch_env!("ELIXIRKIT_PUBSUB"),
+                  on_exit: fn -> System.stop() end
+                )
+
+              case ElixirKit.Bridge.capabilities() do
+                %{
+                  "bridge" => %{
+                    backing: :core,
+                    permission: :not_applicable,
+                    actions: actions
+                  }
+                } ->
+                  if actions["echo"] == :available and actions["capabilities"] == :available do
+                    IO.puts("got: capabilities")
+                  else
+                    IO.puts("unexpected: \#{inspect(actions)}")
+                    System.halt(1)
+                  end
+
+                other ->
+                  IO.puts("unexpected: \#{inspect(other)}")
+                  System.halt(1)
+              end
+          "#;
+
+          let status = elixirkit::elixir(&["-e", code])
+              .env("ELIXIRKIT_PUBSUB", pubsub.url())
+              .status()
+              .expect("failed to start Elixir");
+
+          pubsub.wait();
+          std::process::exit(status.code().unwrap_or(1));
+      }
+      """)
+
+    assert_receive {^port, {:data, {:eol, "got: capabilities"}}}, 10_000
+    assert_receive {^port, {:exit_status, 0}}, 10_000
+  end
+
   test "exit status propagates" do
     port =
       rust(~s"""

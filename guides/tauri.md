@@ -146,10 +146,18 @@ unchanged.
 
 Brokered request/response also uses that same connection via
 `ElixirKit.Bridge.call/2`. Internally Elixir keeps one shared router per
-bridge connection and matches responses by request id on the reserved bridge
-topic. Today that path is intentionally narrow: the built-in `bridge.echo`
-operation is only a proof-of-path for later capability work, and the example
-app below still uses the raw `"ready"` topic flow unchanged.
+bridge connection, implemented internally as `ElixirKit.Bridge.Router`, and
+matches responses by request id on the reserved bridge topic. Today that path
+is intentionally narrow: the built-in core-owned operations are still just
+`bridge.echo` and `bridge.capabilities`, and the example app below still uses
+the raw `"ready"` topic flow unchanged.
+
+Capability lookup now rides over that same broker path with
+`ElixirKit.Bridge.capabilities/0`. The returned data is capability truth, not
+authorization: action-level availability is reported separately from permission
+state. At this milestone the registry is still internal, built-in, and
+core-owned, so this is not the plugin rollout yet and there is no external
+registration seam yet.
 
 Next, let's add `elixirkit` to `Cargo.toml` dependencies. ElixirKit Hex package ships with the `elixirkit` crate inside so we can use a path dependency like this:
 

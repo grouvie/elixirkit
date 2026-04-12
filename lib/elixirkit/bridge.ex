@@ -11,8 +11,9 @@ defmodule ElixirKit.Bridge do
   backward compatible.
 
   Brokered request/response calls now reuse one shared internal router per
-  bridge connection. That router subscribes to the reserved bridge topic once
-  and matches responses by `request_id`, while ordinary PubSub traffic stays
+  bridge connection. That router, implemented internally as
+  `ElixirKit.Bridge.Router`, subscribes to the reserved bridge topic once and
+  matches responses by `request_id`, while ordinary PubSub traffic stays
   unchanged.
 
   No NIF-backed bridge, mobile runtime, or capability/plugin architecture is
@@ -38,6 +39,8 @@ defmodule ElixirKit.Bridge do
   @type message() :: ElixirKit.PubSub.message()
   @type operation() :: String.t()
   @type call_result() :: {:ok, binary()} | {:error, term()}
+  @type capabilities_map() :: ElixirKit.Bridge.Protocol.capabilities_map()
+  @type capabilities_result() :: capabilities_map() | {:error, term()}
 
   @doc """
   Starts the bridge and links it to the current process.
@@ -94,6 +97,28 @@ defmodule ElixirKit.Bridge do
   @spec broadcast(atom(), topic(), message()) :: :ok
   def broadcast(server, topic, message) do
     ElixirKit.PubSub.broadcast(server, topic, message)
+  end
+
+  @doc """
+  Returns capability truth for the current bridge connection.
+
+  This reports action-level availability and permission state separately. It is
+  feature discovery, not authorization, and today it exposes only the small
+  built-in bridge-core registry. That registry is still internal and
+  core-owned; external capability registration comes later.
+  """
+  @spec capabilities() :: capabilities_result()
+  def capabilities do
+    capabilities(__MODULE__)
+  end
+
+  @doc false
+  @spec capabilities(atom()) :: capabilities_result()
+  def capabilities(server) when is_atom(server) do
+    with {:ok, body} <- call(server, "bridge.capabilities", "", 5_000),
+         {:ok, capabilities} <- ElixirKit.Bridge.Protocol.decode_capabilities(body) do
+      capabilities
+    end
   end
 
   @doc """

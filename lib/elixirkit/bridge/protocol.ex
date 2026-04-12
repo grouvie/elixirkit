@@ -20,6 +20,17 @@ defmodule ElixirKit.Bridge.Protocol do
   @event_kind 3
   @call_result_ok 0
   @call_result_error 1
+  @capability_backing_core 0
+  @capability_backing_tauri_plugin 1
+  @capability_backing_tauri_core 2
+  @permission_not_applicable 0
+  @permission_granted 1
+  @permission_denied 2
+  @permission_prompt 3
+  @availability_available 0
+  @availability_unavailable 1
+  @availability_unsupported 2
+  @availability_unsupported_platform 3
 
   defmodule Request do
     @moduledoc false
@@ -63,6 +74,18 @@ defmodule ElixirKit.Bridge.Protocol do
   end
 
   @type envelope() :: Request.t() | Response.t() | Event.t()
+  @type backing_kind() :: :core | :tauri_plugin | :tauri_core
+  @type permission_state() :: :not_applicable | :granted | :denied | :prompt
+  @type action_availability() ::
+          :available | :unavailable | :unsupported | :unsupported_platform
+
+  @type capability_descriptor() :: %{
+          required(:backing) => backing_kind(),
+          required(:permission) => permission_state(),
+          required(:actions) => %{required(binary()) => action_availability()}
+        }
+
+  @type capabilities_map() :: %{required(binary()) => capability_descriptor()}
 
   @doc """
   Returns the current bridge envelope protocol version.
@@ -268,6 +291,53 @@ defmodule ElixirKit.Bridge.Protocol do
     {:error, :missing_result_status}
   end
 
+  @doc false
+  @spec encode_capabilities(capabilities_map()) :: {:ok, binary()} | {:error, term()}
+  def encode_capabilities(capabilities) when is_map(capabilities) do
+    with :ok <- validate_namespace_count(map_size(capabilities)),
+         {:ok, iodata} <-
+           Enum.reduce_while(
+             Enum.sort_by(capabilities, fn {namespace, _descriptor} -> namespace end),
+             {:ok, [<<map_size(capabilities)::16>>]},
+             fn {namespace, descriptor}, {:ok, acc} ->
+               case encode_capability_namespace(namespace, descriptor) do
+                 {:ok, chunk} -> {:cont, {:ok, [acc, chunk]}}
+                 {:error, reason} -> {:halt, {:error, reason}}
+               end
+             end
+           ) do
+      {:ok, IO.iodata_to_binary(iodata)}
+    end
+  end
+
+  def encode_capabilities(_capabilities), do: {:error, :invalid_capabilities}
+
+  @doc false
+  @spec encode_capabilities!(capabilities_map()) :: binary()
+  def encode_capabilities!(capabilities) do
+    case encode_capabilities(capabilities) do
+      {:ok, body} -> body
+      {:error, reason} -> raise ArgumentError, "invalid capabilities body: #{inspect(reason)}"
+    end
+  end
+
+  @doc false
+  @spec decode_capabilities(binary()) :: {:ok, capabilities_map()} | {:error, term()}
+  def decode_capabilities(<<namespace_count::16, rest::binary>>) do
+    decode_capability_namespaces(rest, namespace_count, %{})
+  end
+
+  def decode_capabilities(_body), do: {:error, :truncated_capabilities}
+
+  @doc false
+  @spec decode_capabilities!(binary()) :: capabilities_map()
+  def decode_capabilities!(body) do
+    case decode_capabilities(body) do
+      {:ok, capabilities} -> capabilities
+      {:error, reason} -> raise ArgumentError, "invalid capabilities body: #{inspect(reason)}"
+    end
+  end
+
   defp encode_with_request_id(version, kind, request_id, body)
        when is_binary(request_id) and is_binary(body) do
     with :ok <- validate_version(version),
@@ -309,11 +379,26 @@ defmodule ElixirKit.Bridge.Protocol do
   defp validate_non_empty_operation(<<>>), do: {:error, :missing_operation}
   defp validate_non_empty_operation(_operation), do: :ok
 
+  defp validate_non_empty_namespace(<<>>), do: {:error, :missing_namespace}
+  defp validate_non_empty_namespace(_namespace), do: :ok
+
+  defp validate_non_empty_action(<<>>), do: {:error, :missing_action}
+  defp validate_non_empty_action(_action), do: :ok
+
   defp validate_operation_length(operation) when byte_size(operation) <= 255, do: :ok
   defp validate_operation_length(_operation), do: {:error, :operation_too_large}
 
+  defp validate_name_length(name) when byte_size(name) <= 255, do: :ok
+  defp validate_name_length(_name), do: {:error, :name_too_large}
+
   defp validate_request_id_length(request_id) when byte_size(request_id) <= 65_535, do: :ok
   defp validate_request_id_length(_request_id), do: {:error, :request_id_too_large}
+
+  defp validate_namespace_count(count) when count <= 65_535, do: :ok
+  defp validate_namespace_count(_count), do: {:error, :too_many_namespaces}
+
+  defp validate_action_count(count) when count <= 65_535, do: :ok
+  defp validate_action_count(_count), do: {:error, :too_many_actions}
 
   defp validate_body_length(body) when byte_size(body) <= 4_294_967_295, do: :ok
   defp validate_body_length(_body), do: {:error, :body_too_large}
@@ -336,4 +421,158 @@ defmodule ElixirKit.Bridge.Protocol do
   defp decode_kind(@response_kind), do: {:ok, :response}
   defp decode_kind(@event_kind), do: {:ok, :event}
   defp decode_kind(kind), do: {:error, {:invalid_kind, kind}}
+
+  defp encode_capability_namespace(
+         namespace,
+         %{backing: backing, permission: permission, actions: actions}
+       )
+       when is_binary(namespace) and is_map(actions) do
+    with :ok <- validate_non_empty_namespace(namespace),
+         :ok <- validate_name_length(namespace),
+         :ok <- validate_action_count(map_size(actions)),
+         {:ok, actions_iodata} <- encode_capability_actions(actions),
+         {:ok, backing} <- encode_backing(backing),
+         {:ok, permission} <- encode_permission(permission) do
+      {:ok,
+       [
+         <<byte_size(namespace)>>,
+         namespace,
+         <<backing, permission, map_size(actions)::16>>,
+         actions_iodata
+       ]}
+    end
+  end
+
+  defp encode_capability_namespace(_namespace, _descriptor) do
+    {:error, :invalid_capability_descriptor}
+  end
+
+  defp encode_capability_actions(actions) do
+    Enum.reduce_while(
+      Enum.sort_by(actions, fn {action, _availability} -> action end),
+      {:ok, []},
+      fn {action, availability}, {:ok, acc} ->
+        case encode_capability_action(action, availability) do
+          {:ok, chunk} -> {:cont, {:ok, [acc, chunk]}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end
+    )
+  end
+
+  defp encode_capability_action(action, availability) when is_binary(action) do
+    with :ok <- validate_non_empty_action(action),
+         :ok <- validate_name_length(action),
+         {:ok, availability} <- encode_availability(availability) do
+      {:ok, [<<byte_size(action)>>, action, <<availability>>]}
+    end
+  end
+
+  defp encode_capability_action(_action, _availability), do: {:error, :invalid_capability_action}
+
+  defp decode_capability_namespaces(<<>>, 0, capabilities), do: {:ok, capabilities}
+
+  defp decode_capability_namespaces(_rest, 0, _capabilities),
+    do: {:error, :invalid_capability_lengths}
+
+  defp decode_capability_namespaces(rest, count, capabilities) do
+    with {:ok, namespace, rest} <- take_name(rest, :missing_namespace),
+         {:ok, backing, rest} <- take_backing(rest),
+         {:ok, permission, rest} <- take_permission(rest),
+         {:ok, action_count, rest} <- take_u16(rest),
+         {:ok, actions, rest} <- decode_capability_actions(rest, action_count, %{}) do
+      decode_capability_namespaces(
+        rest,
+        count - 1,
+        Map.put(capabilities, namespace, %{
+          backing: backing,
+          permission: permission,
+          actions: actions
+        })
+      )
+    end
+  end
+
+  defp decode_capability_actions(rest, 0, actions), do: {:ok, actions, rest}
+
+  defp decode_capability_actions(rest, count, actions) do
+    with {:ok, action, rest} <- take_name(rest, :missing_action),
+         {:ok, availability, rest} <- take_availability(rest) do
+      decode_capability_actions(rest, count - 1, Map.put(actions, action, availability))
+    end
+  end
+
+  defp take_name(<<length, rest::binary>>, _empty_error)
+       when byte_size(rest) >= length and length > 0 do
+    <<name::binary-size(length), rest::binary>> = rest
+    {:ok, name, rest}
+  end
+
+  defp take_name(<<0, _rest::binary>>, empty_error), do: {:error, empty_error}
+  defp take_name(_rest, _empty_error), do: {:error, :truncated_capabilities}
+
+  defp take_backing(<<backing, rest::binary>>) do
+    with {:ok, backing} <- decode_backing(backing) do
+      {:ok, backing, rest}
+    end
+  end
+
+  defp take_backing(_rest), do: {:error, :truncated_capabilities}
+
+  defp take_permission(<<permission, rest::binary>>) do
+    with {:ok, permission} <- decode_permission(permission) do
+      {:ok, permission, rest}
+    end
+  end
+
+  defp take_permission(_rest), do: {:error, :truncated_capabilities}
+
+  defp take_availability(<<availability, rest::binary>>) do
+    with {:ok, availability} <- decode_availability(availability) do
+      {:ok, availability, rest}
+    end
+  end
+
+  defp take_availability(_rest), do: {:error, :truncated_capabilities}
+
+  defp take_u16(<<value::16, rest::binary>>), do: {:ok, value, rest}
+  defp take_u16(_rest), do: {:error, :truncated_capabilities}
+
+  defp encode_backing(:core), do: {:ok, @capability_backing_core}
+  defp encode_backing(:tauri_plugin), do: {:ok, @capability_backing_tauri_plugin}
+  defp encode_backing(:tauri_core), do: {:ok, @capability_backing_tauri_core}
+  defp encode_backing(backing), do: {:error, {:invalid_capability_backing, backing}}
+
+  defp decode_backing(@capability_backing_core), do: {:ok, :core}
+  defp decode_backing(@capability_backing_tauri_plugin), do: {:ok, :tauri_plugin}
+  defp decode_backing(@capability_backing_tauri_core), do: {:ok, :tauri_core}
+  defp decode_backing(backing), do: {:error, {:invalid_capability_backing, backing}}
+
+  defp encode_permission(:not_applicable), do: {:ok, @permission_not_applicable}
+  defp encode_permission(:granted), do: {:ok, @permission_granted}
+  defp encode_permission(:denied), do: {:ok, @permission_denied}
+  defp encode_permission(:prompt), do: {:ok, @permission_prompt}
+  defp encode_permission(permission), do: {:error, {:invalid_permission_state, permission}}
+
+  defp decode_permission(@permission_not_applicable), do: {:ok, :not_applicable}
+  defp decode_permission(@permission_granted), do: {:ok, :granted}
+  defp decode_permission(@permission_denied), do: {:ok, :denied}
+  defp decode_permission(@permission_prompt), do: {:ok, :prompt}
+  defp decode_permission(permission), do: {:error, {:invalid_permission_state, permission}}
+
+  defp encode_availability(:available), do: {:ok, @availability_available}
+  defp encode_availability(:unavailable), do: {:ok, @availability_unavailable}
+  defp encode_availability(:unsupported), do: {:ok, @availability_unsupported}
+  defp encode_availability(:unsupported_platform), do: {:ok, @availability_unsupported_platform}
+
+  defp encode_availability(availability),
+    do: {:error, {:invalid_action_availability, availability}}
+
+  defp decode_availability(@availability_available), do: {:ok, :available}
+  defp decode_availability(@availability_unavailable), do: {:ok, :unavailable}
+  defp decode_availability(@availability_unsupported), do: {:ok, :unsupported}
+  defp decode_availability(@availability_unsupported_platform), do: {:ok, :unsupported_platform}
+
+  defp decode_availability(availability),
+    do: {:error, {:invalid_action_availability, availability}}
 end

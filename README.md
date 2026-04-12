@@ -73,10 +73,13 @@ unchanged and fully backward compatible.
 
 For brokered request/response over that same connection, use
 `ElixirKit.Bridge.call/2` or `call/3`. The Elixir side keeps one shared
-internal router per bridge connection, subscribes to the reserved bridge topic
-once, and matches responses by opaque request id. Today the only built-in
-operation is `bridge.echo`, which exists as a small end-to-end proof path for
-later capability work:
+internal router per bridge connection, implemented internally as
+`ElixirKit.Bridge.Router`. It subscribes to the reserved bridge topic once and
+matches responses by opaque request id for all brokered calls, including
+capability lookup. Today the built-in core-owned operations are still narrow:
+`bridge.echo` exists as a small end-to-end proof path for later capability
+work, and `bridge.capabilities` reports built-in feature truth from the core
+registry:
 
 ```elixir
 case ElixirKit.Bridge.call("bridge.echo", "ping") do
@@ -88,6 +91,26 @@ end
 This brokered call path still rides over the current TCP PubSub transport. It
 does not replace raw PubSub topics, and it does not introduce capability
 discovery, plugins, or any WebView-based bridge layer.
+
+The bridge can also report its current built-in capability truth:
+
+```elixir
+%{
+  "bridge" => %{
+    backing: :core,
+    permission: :not_applicable,
+    actions: %{
+      "capabilities" => :available,
+      "echo" => :available
+    }
+  }
+} = ElixirKit.Bridge.capabilities()
+```
+
+This is feature discovery, not authorization. Availability is reported per
+action, while permission state stays separate. At this stage the registry is
+still internal, built-in, and core-owned; there is no external registration
+seam yet, and this is not the later plugin rollout.
 
 ## License
 

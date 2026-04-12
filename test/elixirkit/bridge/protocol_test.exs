@@ -69,4 +69,47 @@ defmodule ElixirKit.Bridge.Protocol.Test do
     assert {:ok, body} = Protocol.encode_call_result({:error, "unsupported operation"})
     assert {:ok, {:error, "unsupported operation"}} = Protocol.decode_call_result(body)
   end
+
+  test "capability bodies round trip normalized capability truth" do
+    capabilities = %{
+      "bridge" => %{
+        backing: :core,
+        permission: :not_applicable,
+        actions: %{
+          "capabilities" => :available,
+          "echo" => :available
+        }
+      },
+      "clipboard" => %{
+        backing: :tauri_plugin,
+        permission: :prompt,
+        actions: %{
+          "read_text" => :unsupported_platform
+        }
+      }
+    }
+
+    assert {:ok, body} = Protocol.encode_capabilities(capabilities)
+    assert {:ok, ^capabilities} = Protocol.decode_capabilities(body)
+  end
+
+  test "capability bodies keep permission separate from availability" do
+    capabilities = %{
+      "clipboard" => %{
+        backing: :tauri_plugin,
+        permission: :denied,
+        actions: %{
+          "read_text" => :available,
+          "write_text" => :unsupported
+        }
+      }
+    }
+
+    assert {:ok, body} = Protocol.encode_capabilities(capabilities)
+    assert {:ok, decoded} = Protocol.decode_capabilities(body)
+
+    assert decoded["clipboard"].permission == :denied
+    assert decoded["clipboard"].actions["read_text"] == :available
+    assert decoded["clipboard"].actions["write_text"] == :unsupported
+  end
 end

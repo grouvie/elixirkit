@@ -2,15 +2,19 @@
 //!
 //! This is the smallest broker/correlation seam for bridge-core work. It keeps
 //! using the existing reserved topic and outer envelope, and currently handles
-//! only one built-in request operation: `bridge.echo`.
+//! only built-in bridge-core operations such as `bridge.echo` and
+//! `bridge.capabilities`. Dispatch is still core-owned at this stage; plugin
+//! registration and non-core dispatch come later.
 #![expect(
     clippy::redundant_pub_crate,
     reason = "Broker items stay crate-visible for the internal seam while the module remains internal to the crate"
 )]
 
 use crate::PubSub;
+use crate::capabilities;
 use crate::protocol::{self, CallBody, CallResult, Envelope};
 
+const CAPABILITIES_OPERATION: &str = "bridge.capabilities";
 const ECHO_OPERATION: &str = "bridge.echo";
 
 pub(crate) fn attach(pubsub: &PubSub) {
@@ -45,13 +49,18 @@ pub(crate) fn attach(pubsub: &PubSub) {
 fn dispatch_call(call: CallBody<'_>) -> Result<Vec<u8>, &'static str> {
     match call.operation {
         ECHO_OPERATION => Ok(call.payload.to_vec()),
+        CAPABILITIES_OPERATION => protocol::encode_capabilities(&capabilities::built_in())
+            .map_err(|_reason| "failed to encode capabilities"),
         _ => Err("unsupported operation"),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CallBody, ECHO_OPERATION, dispatch_call};
+    use crate::capabilities::{Availability, BackingKind, PermissionState};
+    use crate::protocol;
+
+    use super::{CAPABILITIES_OPERATION, CallBody, ECHO_OPERATION, dispatch_call};
 
     #[test]
     fn echo_operation_returns_the_same_payload() {
@@ -73,5 +82,41 @@ mod tests {
         .expect_err("unknown operations should be rejected");
 
         assert_eq!(error, "unsupported operation");
+    }
+
+    #[test]
+    fn capabilities_operation_returns_built_in_registry() {
+        let response = dispatch_call(CallBody {
+            operation: CAPABILITIES_OPERATION,
+            payload: b"",
+        })
+        .expect("capabilities operation should succeed");
+
+        let capabilities =
+            protocol::decode_capabilities(&response).expect("capabilities response should decode");
+
+        assert_eq!(
+            capabilities.len(),
+            1,
+            "only the built-in bridge namespace should exist"
+        );
+        let bridge = capabilities
+            .first()
+            .expect("expected exactly one built-in namespace");
+
+        assert_eq!(bridge.namespace, "bridge");
+        assert_eq!(bridge.backing, BackingKind::Core);
+        assert_eq!(bridge.permission, PermissionState::NotApplicable);
+        assert_eq!(
+            bridge
+                .actions
+                .iter()
+                .map(|action| (action.name.as_str(), action.availability))
+                .collect::<Vec<_>>(),
+            vec![
+                ("echo", Availability::Available),
+                ("capabilities", Availability::Available),
+            ],
+        );
     }
 }

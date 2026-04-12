@@ -5,13 +5,15 @@
 //! through a stable public compatibility layer. Structured bridge envelopes now
 //! layer over one reserved internal topic on top of that same transport, and a
 //! small internal broker now handles correlated request/response for bridge-core
-//! operations. The command helpers still build correctly configured [`Command`]
-//! values for common Elixir entry points.
+//! operations. A tiny built-in capability registry can now answer feature-truth
+//! lookups over that same broker path. The command helpers still build
+//! correctly configured [`Command`] values for common Elixir entry points.
 
 use std::path::Path;
 use std::process::Command;
 
 mod broker;
+mod capabilities;
 pub(crate) mod protocol;
 mod pubsub;
 mod runtime;
