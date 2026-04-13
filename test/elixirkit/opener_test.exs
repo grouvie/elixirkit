@@ -19,11 +19,14 @@ defmodule ElixirKit.OpenerTest do
   test "open/1 returns :ok when the host reports success" do
     task = Task.async(fn -> Opener.open(:bridge_client, "https://example.com") end)
 
-    {request_id, "opener.open", "https://example.com"} = receive_open_request()
+    {request_id, "opener.open", %{"target" => "https://example.com"}} = receive_open_request()
 
     Protocol.broadcast(
       :bridge_server,
-      Protocol.response(request_id, Protocol.encode_call_result!({:ok, ""}))
+      Protocol.response(
+        request_id,
+        Protocol.encode_call_result!({:ok, Protocol.encode_json_body!(%{})})
+      )
     )
 
     assert :ok = Task.await(task, 1_000)
@@ -32,7 +35,7 @@ defmodule ElixirKit.OpenerTest do
   test "open/1 returns the broker error when the host reports failure" do
     task = Task.async(fn -> Opener.open(:bridge_client, "https://example.com") end)
 
-    {request_id, "opener.open", "https://example.com"} = receive_open_request()
+    {request_id, "opener.open", %{"target" => "https://example.com"}} = receive_open_request()
 
     Protocol.broadcast(
       :bridge_server,
@@ -47,7 +50,8 @@ defmodule ElixirKit.OpenerTest do
 
     assert {:ok, %Protocol.Request{request_id: request_id, body: body}} = Protocol.decode(message)
     assert {:ok, {operation, payload}} = Protocol.decode_call_body(body)
+    assert {:ok, decoded} = Protocol.decode_json_body(payload)
 
-    {request_id, operation, payload}
+    {request_id, operation, decoded}
   end
 end

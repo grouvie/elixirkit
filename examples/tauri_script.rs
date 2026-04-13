@@ -24,6 +24,7 @@ fn run() {
     let script_exs = r#"
     Mix.install([
       {:phoenix_playground, "~> 0.1.8"},
+      {:jason, "~> 1.4"},
       {:elixirkit, path: "."}
     ])
 

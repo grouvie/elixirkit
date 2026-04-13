@@ -70,6 +70,17 @@ defmodule ElixirKit.Bridge.Protocol.Test do
     assert {:ok, {:error, "unsupported operation"}} = Protocol.decode_call_result(body)
   end
 
+  test "json bodies round trip plugin-style request and success-response payloads" do
+    payload = %{"label" => "main", "title" => "Example"}
+
+    assert {:ok, body} = Protocol.encode_json_body(payload)
+    assert {:ok, ^payload} = Protocol.decode_json_body(body)
+  end
+
+  test "decode_json_body reports invalid json payloads" do
+    assert {:error, _reason} = Protocol.decode_json_body("{")
+  end
+
   test "capability bodies round trip normalized capability truth" do
     capabilities = %{
       "bridge" => %{

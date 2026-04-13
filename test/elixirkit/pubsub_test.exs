@@ -8,7 +8,7 @@ defmodule ElixirKit.PubSub.Test do
       System.cmd("elixir", [
         "-e",
         """
-        Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+        Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
         """
       ])
 
@@ -54,7 +54,7 @@ defmodule ElixirKit.PubSub.Test do
           });
 
           let code = r#"
-              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
 
               {:ok, _} =
                 ElixirKit.PubSub.start_link(
@@ -157,7 +157,7 @@ defmodule ElixirKit.PubSub.Test do
           });
 
           let code = r#"
-              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
 
               {:ok, _} =
                 ElixirKit.Bridge.start_link(
@@ -208,7 +208,7 @@ defmodule ElixirKit.PubSub.Test do
               .expect("failed to listen");
 
           let code = r#"
-              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
 
               {:ok, _} =
                 ElixirKit.Bridge.start_link(
@@ -248,7 +248,7 @@ defmodule ElixirKit.PubSub.Test do
               .expect("failed to listen");
 
           let code = r#"
-              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
 
               {:ok, _} =
                 ElixirKit.Bridge.start_link(
@@ -294,37 +294,83 @@ defmodule ElixirKit.PubSub.Test do
   test "registered opener capability is discoverable and opener.open dispatches against the rust side" do
     port =
       rust(~s"""
+      use std::collections::BTreeMap;
+
       use elixirkit::{
-          ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityNamespace,
-          CapabilityPermission,
+          ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
+          CapabilityNamespace, CapabilityPermission,
       };
 
       fn main() {
           let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0")
               .expect("failed to listen");
 
-          pubsub.register_capability(CapabilityNamespace::new(
-              "opener",
-              CapabilityBacking::TauriPlugin,
-              CapabilityPermission::NotApplicable,
-              vec![CapabilityAction::new("open", ActionAvailability::Available)],
-          ))
+          pubsub.register_capability_handlers(
+              CapabilityNamespace::new(
+                  "opener",
+                  CapabilityBacking::TauriPlugin,
+                  CapabilityPermission::NotApplicable,
+                  vec![CapabilityAction::new("open", ActionAvailability::Available)],
+              ),
+              vec![CapabilityHandler::json("open", |request: BTreeMap<String, String>| {
+                  match request.get("target").map(String::as_str) {
+                      Some("https://example.com") => Ok(BTreeMap::<String, String>::new()),
+                      other => Err(format!("unexpected opener target: {other:?}")),
+                  }
+              })],
+          )
           .expect("failed to register opener capability");
+          pubsub.register_capability_handlers(
+              CapabilityNamespace::new(
+                  "clipboard",
+                  CapabilityBacking::TauriPlugin,
+                  CapabilityPermission::NotApplicable,
+                  vec![
+                      CapabilityAction::new("read_text", ActionAvailability::Available),
+                      CapabilityAction::new("write_text", ActionAvailability::Available),
+                  ],
+              ),
+              vec![
+                  CapabilityHandler::json("read_text", |_request: BTreeMap<String, String>| {
+                      let mut response = BTreeMap::new();
+                      response.insert("text".to_owned(), "copied".to_owned());
+                      Ok(response)
+                  }),
+                  CapabilityHandler::json("write_text", |_request: BTreeMap<String, String>| {
+                      Ok(BTreeMap::<String, String>::new())
+                  }),
+              ],
+          )
+          .expect("failed to register clipboard capability");
+          pubsub.register_capability_handlers(
+              CapabilityNamespace::new(
+                  "window",
+                  CapabilityBacking::TauriCore,
+                  CapabilityPermission::NotApplicable,
+                  vec![
+                      CapabilityAction::new("list", ActionAvailability::Available),
+                      CapabilityAction::new("set_title", ActionAvailability::Available),
+                  ],
+              ),
+              vec![
+                  CapabilityHandler::json("list", |_request: BTreeMap<String, String>| {
+                      let mut window = BTreeMap::new();
+                      window.insert("label".to_owned(), "main".to_owned());
+                      window.insert("title".to_owned(), "Example".to_owned());
 
-          pubsub.register_operation_handler("opener.open", |payload| {
-              if payload == b"https://example.com" {
-                  Ok(Vec::new())
-              } else {
-                  Err(format!(
-                      "unexpected opener target: {}",
-                      String::from_utf8_lossy(payload)
-                  ))
-              }
-          })
-          .expect("failed to register opener handler");
+                      let mut response = BTreeMap::new();
+                      response.insert("windows".to_owned(), vec![window]);
+                      Ok(response)
+                  }),
+                  CapabilityHandler::json("set_title", |_request: BTreeMap<String, String>| {
+                      Ok(BTreeMap::<String, String>::new())
+                  }),
+              ],
+          )
+          .expect("failed to register window capability");
 
           let code = r#"
-              Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
 
               {:ok, _} =
                 ElixirKit.Bridge.start_link(
@@ -343,6 +389,22 @@ defmodule ElixirKit.PubSub.Test do
                     backing: :tauri_plugin,
                     permission: :not_applicable,
                     actions: %{"open" => :available}
+                  },
+                  "clipboard" => %{
+                    backing: :tauri_plugin,
+                    permission: :not_applicable,
+                    actions: %{
+                      "read_text" => :available,
+                      "write_text" => :available
+                    }
+                  },
+                  "window" => %{
+                    backing: :tauri_core,
+                    permission: :not_applicable,
+                    actions: %{
+                      "list" => :available,
+                      "set_title" => :available
+                    }
                   }
                 } ->
                   if bridge_actions["echo"] == :available and
@@ -379,6 +441,150 @@ defmodule ElixirKit.PubSub.Test do
       """)
 
     assert_receive {^port, {:data, {:eol, "got: opened"}}}, 10_000
+    assert_receive {^port, {:exit_status, 0}}, 10_000
+  end
+
+  test "registered clipboard capability dispatches a read_text call against the rust side" do
+    port =
+      rust(~s"""
+      use std::collections::BTreeMap;
+
+      use elixirkit::{
+          ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
+          CapabilityNamespace, CapabilityPermission,
+      };
+
+      fn main() {
+          let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0")
+              .expect("failed to listen");
+
+          pubsub.register_capability_handlers(
+              CapabilityNamespace::new(
+                  "clipboard",
+                  CapabilityBacking::TauriPlugin,
+                  CapabilityPermission::NotApplicable,
+                  vec![
+                      CapabilityAction::new("read_text", ActionAvailability::Available),
+                      CapabilityAction::new("write_text", ActionAvailability::Available),
+                  ],
+              ),
+              vec![
+                  CapabilityHandler::json("read_text", |_request: BTreeMap<String, String>| {
+                      let mut response = BTreeMap::new();
+                      response.insert("text".to_owned(), "copied".to_owned());
+                      Ok(response)
+                  }),
+                  CapabilityHandler::json("write_text", |_request: BTreeMap<String, String>| {
+                      Ok(BTreeMap::<String, String>::new())
+                  }),
+              ],
+          )
+          .expect("failed to register clipboard capability");
+
+          let code = r#"
+              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
+
+              {:ok, _} =
+                ElixirKit.Bridge.start_link(
+                  connect: System.fetch_env!("ELIXIRKIT_PUBSUB"),
+                  on_exit: fn -> System.stop() end
+                )
+
+              case ElixirKit.Clipboard.read_text() do
+                {:ok, "copied"} ->
+                  IO.puts("got: copied")
+
+                other ->
+                  IO.puts("unexpected clipboard result: \#{inspect(other)}")
+                  System.halt(1)
+              end
+          "#;
+
+          let status = elixirkit::elixir(&["-e", code])
+              .env("ELIXIRKIT_PUBSUB", pubsub.url())
+              .status()
+              .expect("failed to start Elixir");
+
+          pubsub.wait();
+          std::process::exit(status.code().unwrap_or(1));
+      }
+      """)
+
+    assert_receive {^port, {:data, {:eol, "got: copied"}}}, 10_000
+    assert_receive {^port, {:exit_status, 0}}, 10_000
+  end
+
+  test "registered window capability dispatches a list call against the rust side" do
+    port =
+      rust(~s"""
+      use std::collections::BTreeMap;
+
+      use elixirkit::{
+          ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
+          CapabilityNamespace, CapabilityPermission,
+      };
+
+      fn main() {
+          let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0")
+              .expect("failed to listen");
+
+          pubsub.register_capability_handlers(
+              CapabilityNamespace::new(
+                  "window",
+                  CapabilityBacking::TauriCore,
+                  CapabilityPermission::NotApplicable,
+                  vec![
+                      CapabilityAction::new("list", ActionAvailability::Available),
+                      CapabilityAction::new("set_title", ActionAvailability::Available),
+                  ],
+              ),
+              vec![
+                  CapabilityHandler::json("list", |_request: BTreeMap<String, String>| {
+                      let mut window = BTreeMap::new();
+                      window.insert("label".to_owned(), "main".to_owned());
+                      window.insert("title".to_owned(), "Example".to_owned());
+
+                      let mut response = BTreeMap::new();
+                      response.insert("windows".to_owned(), vec![window]);
+                      Ok(response)
+                  }),
+                  CapabilityHandler::json("set_title", |_request: BTreeMap<String, String>| {
+                      Ok(BTreeMap::<String, String>::new())
+                  }),
+              ],
+          )
+          .expect("failed to register window capability");
+
+          let code = r#"
+              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
+
+              {:ok, _} =
+                ElixirKit.Bridge.start_link(
+                  connect: System.fetch_env!("ELIXIRKIT_PUBSUB"),
+                  on_exit: fn -> System.stop() end
+                )
+
+              case ElixirKit.Window.list() do
+                {:ok, [%{label: "main", title: "Example"}]} ->
+                  IO.puts("got: windows")
+
+                other ->
+                  IO.puts("unexpected window result: \#{inspect(other)}")
+                  System.halt(1)
+              end
+          "#;
+
+          let status = elixirkit::elixir(&["-e", code])
+              .env("ELIXIRKIT_PUBSUB", pubsub.url())
+              .status()
+              .expect("failed to start Elixir");
+
+          pubsub.wait();
+          std::process::exit(status.code().unwrap_or(1));
+      }
+      """)
+
+    assert_receive {^port, {:data, {:eol, "got: windows"}}}, 10_000
     assert_receive {^port, {:exit_status, 0}}, 10_000
   end
 
@@ -460,7 +666,7 @@ defmodule ElixirKit.PubSub.Test do
         });
 
         let code = r#"
-            Mix.install([{:elixirkit, path: "#{__DIR__}/../.."}])
+            Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
 
             {:ok, _} = ElixirKit.PubSub.start_link(connect: System.fetch_env!("ELIXIRKIT_PUBSUB"), on_exit: fn ->
               File.touch!("#{elixir_exited_path}")

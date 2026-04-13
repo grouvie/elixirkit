@@ -14,6 +14,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+type HandlerFn = dyn Fn(&[u8]) -> Result<Vec<u8>, String> + Send + Sync + 'static;
+
 /// How a capability namespace is currently backed on the host side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackingKind {
@@ -68,6 +73,45 @@ impl ActionDescriptor {
             name: name.into(),
             availability,
         }
+    }
+}
+
+/// Host operation handler for one declared capability action.
+#[derive(Clone)]
+pub struct CapabilityHandler {
+    pub(crate) action: String,
+    pub(crate) handler: Arc<HandlerFn>,
+}
+
+impl CapabilityHandler {
+    /// Creates a handler for an action that deals in raw bytes.
+    #[must_use]
+    pub fn bytes<F>(action: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(&[u8]) -> Result<Vec<u8>, String> + Send + Sync + 'static,
+    {
+        Self {
+            action: action.into(),
+            handler: Arc::new(handler),
+        }
+    }
+
+    /// Creates a handler for an action that decodes JSON requests and encodes
+    /// JSON success responses.
+    #[must_use]
+    pub fn json<Request, Response, F>(action: impl Into<String>, handler: F) -> Self
+    where
+        Request: DeserializeOwned + 'static,
+        Response: Serialize + 'static,
+        F: Fn(Request) -> Result<Response, String> + Send + Sync + 'static,
+    {
+        Self::bytes(action, move |payload| {
+            let request = crate::decode_json_body(payload)
+                .map_err(|error| format!("invalid JSON body: {error}"))?;
+            let response = handler(request)?;
+            crate::encode_json_body(&response)
+                .map_err(|error| format!("failed to encode JSON body: {error}"))
+        })
     }
 }
 
@@ -146,6 +190,35 @@ impl Registry {
         Ok(())
     }
 
+    pub(crate) fn declared_availability(
+        &self,
+        namespace: &str,
+        action: &str,
+    ) -> Option<Availability> {
+        if let Some(availability) = built_in()
+            .into_iter()
+            .find(|descriptor| descriptor.namespace == namespace)
+            .and_then(|descriptor| {
+                descriptor
+                    .actions
+                    .into_iter()
+                    .find(|descriptor| descriptor.name == action)
+            })
+            .map(|descriptor| descriptor.availability)
+        {
+            return Some(availability);
+        }
+
+        let registered = lock_recover(&self.inner);
+        registered.get(namespace).and_then(|descriptor| {
+            descriptor
+                .actions
+                .iter()
+                .find(|descriptor| descriptor.name == action)
+                .map(|descriptor| descriptor.availability)
+        })
+    }
+
     #[must_use]
     pub(crate) fn snapshot(&self) -> Vec<NamespaceDescriptor> {
         let mut namespaces = built_in();
@@ -219,6 +292,10 @@ fn is_built_in_namespace(namespace: &str) -> bool {
     built_in()
         .into_iter()
         .any(|descriptor| descriptor.namespace == namespace)
+}
+
+pub(crate) fn is_built_in_namespace_name(namespace: &str) -> bool {
+    is_built_in_namespace(namespace)
 }
 
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

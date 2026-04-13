@@ -88,17 +88,42 @@ impl PubSub {
         self.broker.register_capability(descriptor)
     }
 
+    /// Registers capability metadata together with the handlers that serve its
+    /// available actions.
+    ///
+    /// This is the preferred stable registration contract for host
+    /// integrations. It validates that declared available actions and concrete
+    /// handlers stay in sync while preserving explicit per-capability
+    /// registration in the host app.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the namespace descriptor is invalid, if any handler
+    /// does not match a declared available action, if an available action is
+    /// missing a handler, or if the namespace has already been registered for
+    /// this connection.
+    pub fn register_capability_handlers(
+        &self,
+        descriptor: crate::CapabilityNamespace,
+        handlers: Vec<crate::CapabilityHandler>,
+    ) -> io::Result<()> {
+        self.broker
+            .register_capability_handlers(descriptor, handlers)
+    }
+
     /// Registers a host operation handler that the internal broker may
     /// dispatch for later bridge calls such as `opener.open`.
     ///
     /// Built-in bridge-core operations such as `bridge.echo` and
     /// `bridge.capabilities` remain owned by the core broker and cannot be
-    /// replaced through this seam.
+    /// replaced through this seam. Prefer `register_capability_handlers` for a
+    /// tighter metadata-plus-handler contract.
     ///
     /// # Errors
     ///
     /// Returns an error if `operation` is invalid, targets a built-in bridge
-    /// operation, or is already registered for this connection.
+    /// operation, is already registered, or does not match a declared
+    /// available capability action.
     pub fn register_operation_handler<F>(&self, operation: &str, handler: F) -> io::Result<()>
     where
         F: Fn(&[u8]) -> Result<Vec<u8>, String> + Send + Sync + 'static,

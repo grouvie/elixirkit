@@ -1,5 +1,8 @@
 //! Integration tests for the `PubSub` transport.
 
+use serde as _;
+use serde_json as _;
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;

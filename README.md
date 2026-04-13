@@ -92,32 +92,53 @@ This brokered call path still rides over the current TCP PubSub transport. It
 does not replace raw PubSub topics, and it does not introduce any WebView-based
 bridge layer.
 
-The first real host capability vertical slice can now be registered explicitly
-from Rust. The current example app does that for `opener`:
+The example Tauri app now proves multiple real host capability slices without
+changing the transport or outer bridge framing:
+
+- `opener` uses Tauri's official opener plugin
+- `clipboard` uses Tauri's official clipboard plugin
+- `window` uses direct Tauri core APIs
+
+Registration is still explicit in `src-tauri/src/lib.rs`. The preferred host
+seam is `PubSub::register_capability_handlers`, which registers capability
+metadata together with the handlers for its available actions so metadata and
+dispatch cannot drift silently. Capability request and success-response bodies
+use JSON only inside the existing broker payload bytes; the outer bridge
+envelope stays the same binary protocol.
+
+For example, the Tauri app registers `clipboard` like this, using small local
+request/response structs for the JSON body shape:
 
 ```rust
 use elixirkit::{
-    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityNamespace,
-    CapabilityPermission,
+    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
+    CapabilityNamespace, CapabilityPermission,
 };
-use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
-pubsub.register_capability(CapabilityNamespace::new(
-    "opener",
-    CapabilityBacking::TauriPlugin,
-    CapabilityPermission::NotApplicable,
-    vec![CapabilityAction::new("open", ActionAvailability::Available)],
-))?;
-
-pubsub.register_operation_handler("opener.open", move |payload| {
-    let target = std::str::from_utf8(payload)
-        .map_err(|_| String::from("opener target must be valid UTF-8"))?;
-
-    app_handle.opener().open_url(target, None::<&str>)
-        .map_err(|error| error.to_string())?;
-
-    Ok(Vec::new())
-})?;
+pubsub.register_capability_handlers(
+    CapabilityNamespace::new(
+        "clipboard",
+        CapabilityBacking::TauriPlugin,
+        CapabilityPermission::NotApplicable,
+        vec![
+            CapabilityAction::new("read_text", ActionAvailability::Available),
+            CapabilityAction::new("write_text", ActionAvailability::Available),
+        ],
+    ),
+    vec![
+        CapabilityHandler::json("read_text", move |_request: EmptyRequest| {
+            let text = app_handle.clipboard().read_text()
+                .map_err(|error| error.to_string())?;
+            Ok(ReadTextResponse { text })
+        }),
+        CapabilityHandler::json("write_text", move |request: WriteTextRequest| {
+            app_handle.clipboard().write_text(&request.text)
+                .map_err(|error| error.to_string())?;
+            Ok(EmptyResponse {})
+        }),
+    ],
+)?;
 ```
 
 Capability discovery reflects that explicit registration:
@@ -138,24 +159,42 @@ Capability discovery reflects that explicit registration:
     actions: %{
       "open" => :available
     }
+  },
+  "clipboard" => %{
+    backing: :tauri_plugin,
+    permission: :not_applicable,
+    actions: %{
+      "read_text" => :available,
+      "write_text" => :available
+    }
+  },
+  "window" => %{
+    backing: :tauri_core,
+    permission: :not_applicable,
+    actions: %{
+      "list" => :available,
+      "set_title" => :available
+    }
   }
 } = ElixirKit.Bridge.capabilities()
 ```
 
-`ElixirKit.Opener` is the matching tiny Elixir wrapper for that first
-registered host capability:
+The matching Elixir wrappers stay tiny and capability-specific:
 
 ```elixir
 case ElixirKit.Opener.open("https://elixir-lang.org") do
   :ok -> :ok
   {:error, reason} -> IO.inspect(reason, label: "open failed")
 end
+
+{:ok, text} = ElixirKit.Clipboard.read_text()
+{:ok, [%{label: "main", title: "Example"}]} = ElixirKit.Window.list()
 ```
 
 This is feature discovery, not authorization. Availability is reported per
 action, while permission state stays separate. Registration is still explicit
-at the app layer, and this is still not the later package split or omnibus
-plugin rollout.
+at the app layer, this is still not the later package/crate split, and there
+is still no omnibus enable-all plugin.
 
 ## License
 

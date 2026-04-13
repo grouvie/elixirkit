@@ -8,12 +8,17 @@
 //! operations. A small capability registry can now answer feature-truth
 //! lookups over that same broker path and aggregate explicitly registered host
 //! capabilities. Host operation handlers can also be registered through
-//! [`PubSub`] while the transport and outer envelope stay the same. The command
-//! helpers still build correctly configured [`Command`] values for common
-//! Elixir entry points.
+//! [`PubSub`] while the transport and outer envelope stay the same. Capability
+//! request and success-response bodies may now use a small JSON convention via
+//! [`encode_json_body`] and [`decode_json_body`] without changing that outer
+//! framing. The command helpers still build correctly configured [`Command`]
+//! values for common Elixir entry points.
 
 use std::path::Path;
 use std::process::Command;
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 mod broker;
 mod capabilities;
@@ -23,8 +28,8 @@ mod runtime;
 
 pub use capabilities::{
     ActionDescriptor as CapabilityAction, Availability as ActionAvailability,
-    BackingKind as CapabilityBacking, NamespaceDescriptor as CapabilityNamespace,
-    PermissionState as CapabilityPermission,
+    BackingKind as CapabilityBacking, CapabilityHandler,
+    NamespaceDescriptor as CapabilityNamespace, PermissionState as CapabilityPermission,
 };
 pub use pubsub::PubSub;
 
@@ -64,4 +69,53 @@ pub fn release(dir: impl AsRef<Path>, name: &str) -> Command {
     let mut cmd = Command::new(&script);
     cmd.args(["start"]);
     cmd
+}
+
+/// Encodes a capability request or success-response body as JSON bytes.
+///
+/// This helper applies only to inner capability payloads. The outer bridge
+/// envelope and broker framing remain the same binary protocol.
+///
+/// # Errors
+///
+/// Returns an error if `value` cannot be serialized to JSON.
+pub fn encode_json_body<T>(value: &T) -> Result<Vec<u8>, serde_json::Error>
+where
+    T: Serialize,
+{
+    serde_json::to_vec(value)
+}
+
+/// Decodes a capability request or success-response body from JSON bytes.
+///
+/// This helper applies only to inner capability payloads. The outer bridge
+/// envelope and broker framing remain the same binary protocol.
+///
+/// # Errors
+///
+/// Returns an error if `bytes` are not valid JSON for `T`.
+pub fn decode_json_body<T>(bytes: &[u8]) -> Result<T, serde_json::Error>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_slice(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn json_body_helpers_round_trip() {
+        let mut payload = BTreeMap::new();
+        payload.insert("label".to_owned(), "window-1".to_owned());
+        payload.insert("title".to_owned(), "Example".to_owned());
+
+        let encoded =
+            crate::encode_json_body(&payload).expect("json payload should encode successfully");
+        let decoded = crate::decode_json_body::<BTreeMap<String, String>>(&encoded)
+            .expect("json payload should decode successfully");
+
+        assert_eq!(decoded, payload);
+    }
 }

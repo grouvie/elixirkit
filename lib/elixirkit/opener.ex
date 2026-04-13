@@ -3,8 +3,8 @@ defmodule ElixirKit.Opener do
   Tiny Elixir wrapper for the first real host capability vertical slice.
 
   This module stays intentionally small. It delegates to
-  `ElixirKit.Bridge.call/4` over the existing brokered bridge path and sends
-  the UTF-8 target string directly as the opaque request payload.
+  `ElixirKit.Bridge.call/4` over the existing brokered bridge path and uses
+  the shared JSON body helpers for its request and success-response payloads.
 
   Registration of the backing host capability is still explicit on the Rust
   side. In the example Tauri app that registration happens in
@@ -24,9 +24,16 @@ defmodule ElixirKit.Opener do
   @doc false
   @spec open(atom(), String.t()) :: open_result()
   def open(server, target) when is_atom(server) and is_binary(target) do
-    case ElixirKit.Bridge.call(server, "opener.open", target, 5_000) do
-      {:ok, _body} -> :ok
-      {:error, reason} -> {:error, reason}
+    with {:ok, body} <- ElixirKit.Bridge.Protocol.encode_json_body(%{"target" => target}),
+         {:ok, response} <- ElixirKit.Bridge.call(server, "opener.open", body, 5_000),
+         {:ok, %{}} <- ElixirKit.Bridge.Protocol.decode_json_body(response) do
+      :ok
+    else
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, other} ->
+        {:error, {:invalid_response, other}}
     end
   end
 end

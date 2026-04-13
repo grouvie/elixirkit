@@ -122,6 +122,7 @@ defmodule ElixirKit.MixProject do
 
   defp deps do
     [
+      {:jason, "~> 1.4"},
       {:ex_doc, ">= 0.0.0", only: :dev, warn_if_outdated: true},
       {:makeup_syntect, ">= 0.0.0", only: :dev}
     ]

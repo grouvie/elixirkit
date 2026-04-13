@@ -18,7 +18,7 @@ fn main() {
     });
 
     let code = r#"
-        Mix.install([{:elixirkit, path: "."}])
+        Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "."}])
 
         {:ok, _} =
           ElixirKit.PubSub.start_link(

@@ -292,6 +292,36 @@ defmodule ElixirKit.Bridge.Protocol do
   end
 
   @doc false
+  @spec encode_json_body(term()) :: {:ok, binary()} | {:error, term()}
+  def encode_json_body(term) do
+    Jason.encode(term)
+  end
+
+  @doc false
+  @spec encode_json_body!(term()) :: binary()
+  def encode_json_body!(term) do
+    case encode_json_body(term) do
+      {:ok, body} -> body
+      {:error, reason} -> raise ArgumentError, "invalid JSON body: #{inspect(reason)}"
+    end
+  end
+
+  @doc false
+  @spec decode_json_body(binary()) :: {:ok, term()} | {:error, term()}
+  def decode_json_body(body) when is_binary(body) do
+    Jason.decode(body)
+  end
+
+  @doc false
+  @spec decode_json_body!(binary()) :: term()
+  def decode_json_body!(body) do
+    case decode_json_body(body) do
+      {:ok, decoded} -> decoded
+      {:error, reason} -> raise ArgumentError, "invalid JSON body: #{inspect(reason)}"
+    end
+  end
+
+  @doc false
   @spec encode_capabilities(capabilities_map()) :: {:ok, binary()} | {:error, term()}
   def encode_capabilities(capabilities) when is_map(capabilities) do
     with :ok <- validate_namespace_count(map_size(capabilities)),

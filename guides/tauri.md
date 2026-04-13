@@ -156,16 +156,22 @@ below still uses the raw `"ready"` topic flow unchanged.
 Capability lookup now rides over that same broker path with
 `ElixirKit.Bridge.capabilities/0`. The returned data is capability truth, not
 authorization: action-level availability is reported separately from permission
-state. At this milestone the registry aggregates the built-in bridge namespace
-with explicitly registered host namespaces. Registration is still explicit in
+state. The registry aggregates the built-in bridge namespace with explicitly
+registered host namespaces. Registration is still explicit in
 `src-tauri/src/lib.rs`; this is not the later package split or omnibus plugin
 rollout yet.
+
+For plugin-style capability operations we now use JSON only for the inner
+request and success-response bodies. The outer bridge envelope, the reserved
+bridge topic, and the binary request/response framing all stay exactly the
+same.
 
 Next, let's add `elixirkit` to `Cargo.toml` dependencies. ElixirKit Hex package ships with the `elixirkit` crate inside so we can use a path dependency like this:
 
 ```diff
   [dependencies]
   tauri = { version = "2", features = [] }
+  tauri-plugin-clipboard-manager = "2"
   tauri-plugin-opener = "2"
 + elixirkit = { path = "../deps/elixirkit/elixirkit_rs" }
 ```
@@ -182,101 +188,181 @@ Let's change `tauri.conf.json` to not create any windows initially. We'll create
 - ],
 ```
 
-Finally, let's start Elixir from the Tauri app and register the first real host
-capability vertical slice. Here's updated `src-tauri/src/lib.rs`:
+Finally, let's start Elixir from the Tauri app and register a few real host
+capability slices explicitly in `src-tauri/src/lib.rs`. The stable seam is
+`register_capability_handlers`: it keeps the declared actions and their
+handlers together while still leaving registration fully app-owned. Here's the
+relevant code:
 
 ```rust
 use elixirkit::{
-    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityNamespace,
-    CapabilityPermission,
+    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
+    CapabilityNamespace, CapabilityPermission,
 };
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0").expect("failed to listen");
+#[derive(Debug, Deserialize)]
+struct EmptyRequest {}
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .setup(move |app| {
-            register_opener(&pubsub, app.handle());
+#[derive(Debug, Serialize)]
+struct EmptyResponse {}
 
-            let app_handle = app.handle().clone();
+#[derive(Debug, Deserialize)]
+struct OpenRequest {
+    target: String,
+}
 
-            pubsub.subscribe("messages", move |msg| {
-                if msg == b"ready" {
-                    create_window(&app_handle);
-                } else {
-                    println!("[rust] {}", String::from_utf8_lossy(msg));
-                }
-            });
+#[derive(Debug, Deserialize)]
+struct WriteTextRequest {
+    text: String,
+}
 
-            let app_handle = app.handle().clone();
+#[derive(Debug, Serialize)]
+struct ReadTextResponse {
+    text: String,
+}
 
-            tauri::async_runtime::spawn_blocking(move || {
-                let mut command = elixir_command();
-                command.env("ELIXIRKIT_PUBSUB", pubsub.url());
-                let status = command.status().expect("failed to start Elixir");
+#[derive(Debug, Serialize)]
+struct WindowInfo {
+    label: String,
+    title: String,
+}
 
-                app_handle.exit(status.code().unwrap_or(1));
-            });
+#[derive(Debug, Serialize)]
+struct WindowListResponse {
+    windows: Vec<WindowInfo>,
+}
 
-            Ok(())
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+#[derive(Debug, Deserialize)]
+struct SetTitleRequest {
+    label: String,
+    title: String,
+}
+
+fn register_host_capabilities(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
+    register_opener(pubsub, app_handle);
+    register_clipboard(pubsub, app_handle);
+    register_window(pubsub, app_handle);
 }
 
 fn register_opener(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
-    pubsub
-        .register_capability(CapabilityNamespace::new(
-            "opener",
-            CapabilityBacking::TauriPlugin,
-            CapabilityPermission::NotApplicable,
-            vec![CapabilityAction::new("open", ActionAvailability::Available)],
-        ))
-        .expect("failed to register opener capability");
-
     let app_handle = app_handle.clone();
     pubsub
-        .register_operation_handler("opener.open", move |payload| {
-            let target = std::str::from_utf8(payload)
-                .map_err(|_| String::from("opener target must be valid UTF-8"))?;
+        .register_capability_handlers(
+            CapabilityNamespace::new(
+                "opener",
+                CapabilityBacking::TauriPlugin,
+                CapabilityPermission::NotApplicable,
+                vec![CapabilityAction::new("open", ActionAvailability::Available)],
+            ),
+            vec![CapabilityHandler::json("open", move |request: OpenRequest| {
+                app_handle
+                    .opener()
+                    .open_url(request.target, None::<String>)
+                    .map_err(|error| error.to_string())?;
 
-            app_handle
-                .opener()
-                .open_url(target, None::<&str>)
-                .map_err(|error| error.to_string())?;
-
-            Ok(Vec::new())
-        })
-        .expect("failed to register opener handler");
+                Ok(EmptyResponse {})
+            })],
+        )
+        .expect("failed to register opener capability");
 }
 
-fn create_window(app_handle: &tauri::AppHandle) {
-    let n = app_handle.webview_windows().len() + 1;
-    let url = tauri::WebviewUrl::External("http://127.0.0.1:4000".parse().unwrap());
-    tauri::WebviewWindowBuilder::new(app_handle, format!("window-{}", n), url)
-        .title("Example")
-        .inner_size(800.0, 600.0)
-        .build()
-        .unwrap();
+fn register_clipboard(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
+    let app_handle_for_read = app_handle.clone();
+    let app_handle_for_write = app_handle.clone();
+
+    pubsub
+        .register_capability_handlers(
+            CapabilityNamespace::new(
+                "clipboard",
+                CapabilityBacking::TauriPlugin,
+                CapabilityPermission::NotApplicable,
+                vec![
+                    CapabilityAction::new("read_text", ActionAvailability::Available),
+                    CapabilityAction::new("write_text", ActionAvailability::Available),
+                ],
+            ),
+            vec![
+                CapabilityHandler::json("read_text", move |_request: EmptyRequest| {
+                    let text = app_handle_for_read
+                        .clipboard()
+                        .read_text()
+                        .map_err(|error| error.to_string())?;
+
+                    Ok(ReadTextResponse { text })
+                }),
+                CapabilityHandler::json("write_text", move |request: WriteTextRequest| {
+                    app_handle_for_write
+                        .clipboard()
+                        .write_text(&request.text)
+                        .map_err(|error| error.to_string())?;
+
+                    Ok(EmptyResponse {})
+                }),
+            ],
+        )
+        .expect("failed to register clipboard capability");
 }
 
-fn elixir_command() -> std::process::Command {
-    let mut command = elixirkit::mix("phx.server", &[]);
-    command.current_dir("..");
-    command
+fn register_window(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
+    let app_handle_for_list = app_handle.clone();
+    let app_handle_for_set_title = app_handle.clone();
+
+    pubsub
+        .register_capability_handlers(
+            CapabilityNamespace::new(
+                "window",
+                CapabilityBacking::TauriCore,
+                CapabilityPermission::NotApplicable,
+                vec![
+                    CapabilityAction::new("list", ActionAvailability::Available),
+                    CapabilityAction::new("set_title", ActionAvailability::Available),
+                ],
+            ),
+            vec![
+                CapabilityHandler::json("list", move |_request: EmptyRequest| {
+                    let mut windows = app_handle_for_list
+                        .webview_windows()
+                        .into_iter()
+                        .map(|(label, window)| {
+                            let title = window.title().map_err(|error| error.to_string())?;
+                            Ok(WindowInfo { label, title })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+
+                    windows.sort_by(|left, right| left.label.cmp(&right.label));
+
+                    Ok(WindowListResponse { windows })
+                }),
+                CapabilityHandler::json("set_title", move |request: SetTitleRequest| {
+                    let window = app_handle_for_set_title
+                        .get_webview_window(&request.label)
+                        .ok_or_else(|| format!("window {:?} was not found", request.label))?;
+
+                    window
+                        .set_title(&request.title)
+                        .map_err(|error| error.to_string())?;
+
+                    Ok(EmptyResponse {})
+                }),
+            ],
+        )
+        .expect("failed to register window capability");
 }
 ```
 
 We still subscribe to the `messages` PubSub topic exactly as before. Once
 Elixir sends the `ready` message, we create a window pointing to our LiveView.
-The new part is the explicit opener registration: the example app reports an
-`opener` namespace through `bridge.capabilities` and wires `opener.open` to
-Tauri's official opener plugin without hardcoding that capability into the
-bridge core. Run the following to verify:
+The new part is the explicit registration contract: the example app now
+registers `opener`, `clipboard`, and `window` without hardcoding any of them
+into the bridge core. `opener` uses Tauri's official opener plugin,
+`clipboard` uses Tauri's official clipboard plugin, and `window` uses direct
+Tauri core APIs. The Elixir wrappers (`ElixirKit.Opener`, `ElixirKit.Clipboard`,
+and `ElixirKit.Window`) all ride over the same brokered path, but the raw
+`"ready"` / `"count"` PubSub flow stays unchanged. Run the following to verify:
 
 ```sh
 $ cargo tauri dev
