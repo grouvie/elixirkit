@@ -4,7 +4,7 @@
 //! state separate from support truth. The registry now aggregates the
 //! built-in bridge-core namespace with explicitly registered host namespaces.
 //! Registration is still intentionally narrow and explicit at the app layer;
-//! this is not the later package split or omnibus plugin model.
+//! this is not the final productized plugin model or omnibus plugin rollout.
 #![expect(
     clippy::redundant_pub_crate,
     reason = "Capability registry items stay crate-visible while the module remains internal to the crate"

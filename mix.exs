@@ -3,6 +3,7 @@ defmodule ElixirKit.MixProject do
 
   @version "0.1.0-dev"
   @source_url "https://github.com/livebook-dev/elixirkit"
+  @capability_packages ~w(elixirkit_opener elixirkit_clipboard elixirkit_window)
 
   def project do
     [
@@ -58,12 +59,24 @@ defmodule ElixirKit.MixProject do
 
   defp aliases do
     [
-      docs: [&docs/1, "docs.rs"],
+      docs: ["docs.root", "docs.rs", "docs.packages"],
+      "docs.root": &docs_root/1,
       "docs.rs": &docs_rs/1,
+      "docs.packages": &docs_packages/1,
       "test.all": &test_all/1,
+      "test.packages": [
+        "cmd --cd packages/elixirkit_opener mix deps.get",
+        "cmd --cd packages/elixirkit_opener mix test",
+        "cmd --cd packages/elixirkit_clipboard mix deps.get",
+        "cmd --cd packages/elixirkit_clipboard mix test",
+        "cmd --cd packages/elixirkit_window mix deps.get",
+        "cmd --cd packages/elixirkit_window mix test"
+      ],
       "test.rs": [
-        "cmd cargo check --manifest-path elixirkit_rs/Cargo.toml",
-        "cmd cargo test --manifest-path elixirkit_rs/Cargo.toml"
+        "cmd cargo fmt --all --check",
+        "cmd cargo check --workspace",
+        "cmd cargo test --workspace",
+        "cmd cargo clippy --workspace --all-targets -- -D warnings"
       ],
       "test.examples": [
         "cmd ./examples/cli_script.rs",
@@ -75,6 +88,7 @@ defmodule ElixirKit.MixProject do
 
   defp test_all(args) do
     Mix.Task.run("test", args)
+    Mix.Task.run("test.packages")
     Mix.Task.run("test.rs")
     Mix.Task.run("test.examples")
     validate_versions()
@@ -96,7 +110,7 @@ defmodule ElixirKit.MixProject do
     end
   end
 
-  defp docs(_) do
+  defp docs_root(_) do
     readme = File.read!("README.md")
     File.write!("README.md", String.replace(readme, "https://hexdocs.pm/elixirkit/", ""))
 
@@ -109,11 +123,30 @@ defmodule ElixirKit.MixProject do
     end
   end
 
+  defp docs_packages(_) do
+    packages_output_dir = Path.join([__DIR__, "doc", "packages"])
+    File.rm_rf!(packages_output_dir)
+    File.mkdir_p!(packages_output_dir)
+
+    Enum.each(@capability_packages, fn package ->
+      package_dir = Path.join([__DIR__, "packages", package])
+      package_output_dir = Path.join(packages_output_dir, package)
+
+      case System.cmd("mix", ["docs"], cd: package_dir, into: IO.stream(), stderr_to_stdout: true) do
+        {_, 0} ->
+          File.cp_r!(Path.join(package_dir, "doc"), package_output_dir)
+
+        {_, status} ->
+          Mix.raise("package docs failed for #{package} with exit code #{status}")
+      end
+    end)
+  end
+
   defp docs_rs(_) do
-    case Mix.shell().cmd("cargo doc --no-deps --manifest-path elixirkit_rs/Cargo.toml") do
+    case Mix.shell().cmd("cargo doc --no-deps --workspace") do
       0 ->
         File.rm_rf!("doc/rs")
-        File.cp_r!("elixirkit_rs/target/doc", "doc/rs")
+        File.cp_r!("target/doc", "doc/rs")
 
       status ->
         Mix.raise("cargo doc failed with exit code #{status}")

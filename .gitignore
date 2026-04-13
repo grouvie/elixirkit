@@ -9,9 +9,13 @@
 
 # Where third-party dependencies like ExDoc output generated docs.
 /doc/
+packages/*/doc/
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Cargo workspace build artifacts.
+/target/
 
 # If the VM crashes, it generates a dump, let's ignore it too.
 erl_crash.dump

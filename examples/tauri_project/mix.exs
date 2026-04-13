@@ -63,7 +63,10 @@ defmodule Example.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
-      {:elixirkit, path: "../.."}
+      {:elixirkit, path: "../.."},
+      {:elixirkit_opener, path: "../../packages/elixirkit_opener"},
+      {:elixirkit_clipboard, path: "../../packages/elixirkit_clipboard"},
+      {:elixirkit_window, path: "../../packages/elixirkit_window"}
     ]
   end
 

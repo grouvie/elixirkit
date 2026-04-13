@@ -64,12 +64,22 @@ end
 ```
 
 This is an incremental bridge seam, not a rewrite. No NIF-backed bridge,
-mobile runtime, or capability/plugin architecture is being introduced yet, and
+mobile runtime, or wrapper CLI is being introduced here, and
 `ElixirKit.PubSub` remains fully supported for direct use.
 
 Structured bridge envelopes now layer over one reserved internal topic on top
 of the same TCP PubSub transport. Existing raw topic/message broadcasts remain
 unchanged and fully backward compatible.
+
+The current extraction layout is now:
+
+- `elixirkit_rs/` for the bridge/core Rust crate
+- `crates/tauri-plugin-elixir-opener`
+- `crates/tauri-plugin-elixir-clipboard`
+- `crates/tauri-plugin-elixir-window`
+- `packages/elixirkit_opener`
+- `packages/elixirkit_clipboard`
+- `packages/elixirkit_window`
 
 For brokered request/response over that same connection, use
 `ElixirKit.Bridge.call/2` or `call/3`. The Elixir side keeps one shared
@@ -99,47 +109,26 @@ changing the transport or outer bridge framing:
 - `clipboard` uses Tauri's official clipboard plugin
 - `window` uses direct Tauri core APIs
 
-Registration is still explicit in `src-tauri/src/lib.rs`. The preferred host
-seam is `PubSub::register_capability_handlers`, which registers capability
-metadata together with the handlers for its available actions so metadata and
-dispatch cannot drift silently. Capability request and success-response bodies
-use JSON only inside the existing broker payload bytes; the outer bridge
-envelope stays the same binary protocol.
+Registration is still explicit in `src-tauri/src/lib.rs`, but the
+capability-specific host code now lives in separate local crates. The
+preferred host seam remains `PubSub::register_capability_handlers`, which
+registers capability metadata together with the handlers for its available
+actions so metadata and dispatch cannot drift silently. Capability request and
+success-response bodies still use JSON only inside the existing broker payload
+bytes; the outer bridge envelope stays the same binary protocol.
 
-For example, the Tauri app registers `clipboard` like this, using small local
-request/response structs for the JSON body shape:
+The example Tauri app now stays explicit and small:
 
 ```rust
-use elixirkit::{
-    ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
-    CapabilityNamespace, CapabilityPermission,
-};
-use tauri_plugin_clipboard_manager::ClipboardExt;
-
-pubsub.register_capability_handlers(
-    CapabilityNamespace::new(
-        "clipboard",
-        CapabilityBacking::TauriPlugin,
-        CapabilityPermission::NotApplicable,
-        vec![
-            CapabilityAction::new("read_text", ActionAvailability::Available),
-            CapabilityAction::new("write_text", ActionAvailability::Available),
-        ],
-    ),
-    vec![
-        CapabilityHandler::json("read_text", move |_request: EmptyRequest| {
-            let text = app_handle.clipboard().read_text()
-                .map_err(|error| error.to_string())?;
-            Ok(ReadTextResponse { text })
-        }),
-        CapabilityHandler::json("write_text", move |request: WriteTextRequest| {
-            app_handle.clipboard().write_text(&request.text)
-                .map_err(|error| error.to_string())?;
-            Ok(EmptyResponse {})
-        }),
-    ],
-)?;
+tauri_plugin_elixir_opener::register(&pubsub, app.handle())?;
+tauri_plugin_elixir_clipboard::register(&pubsub, app.handle())?;
+tauri_plugin_elixir_window::register(&pubsub, app.handle())?;
 ```
+
+The LiveView home screen in that example is now a small showcase instead of
+only a counter. It still keeps the raw `"ready"` and `"count"` flow intact,
+and it now also drives `bridge.echo`, capability discovery, clipboard, window,
+and opener calls from Elixir through the extracted capability packages.
 
 Capability discovery reflects that explicit registration:
 
@@ -179,7 +168,17 @@ Capability discovery reflects that explicit registration:
 } = ElixirKit.Bridge.capabilities()
 ```
 
-The matching Elixir wrappers stay tiny and capability-specific:
+The matching Elixir wrappers now live in separate local packages. In this repo
+the example app depends on:
+
+```elixir
+{:elixirkit, path: "../.."},
+{:elixirkit_opener, path: "../../packages/elixirkit_opener"},
+{:elixirkit_clipboard, path: "../../packages/elixirkit_clipboard"},
+{:elixirkit_window, path: "../../packages/elixirkit_window"}
+```
+
+The public wrapper APIs stay tiny and capability-specific:
 
 ```elixir
 case ElixirKit.Opener.open("https://elixir-lang.org") do
@@ -193,8 +192,24 @@ end
 
 This is feature discovery, not authorization. Availability is reported per
 action, while permission state stays separate. Registration is still explicit
-at the app layer, this is still not the later package/crate split, and there
-is still no omnibus enable-all plugin.
+at the app layer, this is now the first package/crate extraction pass, and
+there is still no omnibus enable-all plugin or wrapper CLI.
+
+## Docs
+
+Run `mix docs` from the repo root to generate:
+
+- the root Elixir bridge/core docs in `doc/`
+- the Rust docs in `doc/rs/`
+- the extracted Elixir capability package docs in:
+  - `doc/packages/elixirkit_opener`
+  - `doc/packages/elixirkit_clipboard`
+  - `doc/packages/elixirkit_window`
+
+Each extracted Elixir capability package also has its own local docs flow, so
+you can run `mix docs` inside `packages/elixirkit_opener`,
+`packages/elixirkit_clipboard`, or `packages/elixirkit_window` to build only
+that package's docs.
 
 ## License
 

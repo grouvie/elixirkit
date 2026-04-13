@@ -4,7 +4,8 @@ defmodule ElixirKit.Clipboard do
 
   Requests and success responses use the shared JSON body helpers layered over
   the existing brokered bridge path. Registration of the backing host
-  capability remains explicit on the Rust side.
+  capability remains explicit on the Rust side, now through the extracted
+  `tauri-plugin-elixir-clipboard` helper crate.
   """
 
   alias ElixirKit.Bridge

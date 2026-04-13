@@ -1,0 +1,13 @@
+[package]
+name = "tauri-plugin-elixir-clipboard"
+version = "0.1.0-dev"
+edition = "2024"
+
+[dependencies]
+elixirkit = { path = "../../elixirkit_rs" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+
+[lints]
+workspace = true

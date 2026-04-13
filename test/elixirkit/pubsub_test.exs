@@ -8,7 +8,12 @@ defmodule ElixirKit.PubSub.Test do
       System.cmd("elixir", [
         "-e",
         """
-        Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
+        Mix.install([
+          {:jason, "~> 1.4"},
+          {:elixirkit_opener, path: "#{__DIR__}/../../packages/elixirkit_opener"},
+          {:elixirkit_clipboard, path: "#{__DIR__}/../../packages/elixirkit_clipboard"},
+          {:elixirkit_window, path: "#{__DIR__}/../../packages/elixirkit_window"}
+        ])
         """
       ])
 
@@ -370,7 +375,12 @@ defmodule ElixirKit.PubSub.Test do
           .expect("failed to register window capability");
 
           let code = r#"
-              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([
+                {:jason, "~> 1.4"},
+                {:elixirkit_opener, path: "#{__DIR__}/../../packages/elixirkit_opener"},
+                {:elixirkit_clipboard, path: "#{__DIR__}/../../packages/elixirkit_clipboard"},
+                {:elixirkit_window, path: "#{__DIR__}/../../packages/elixirkit_window"}
+              ])
 
               {:ok, _} =
                 ElixirKit.Bridge.start_link(
@@ -482,7 +492,10 @@ defmodule ElixirKit.PubSub.Test do
           .expect("failed to register clipboard capability");
 
           let code = r#"
-              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([
+                {:jason, "~> 1.4"},
+                {:elixirkit_clipboard, path: "#{__DIR__}/../../packages/elixirkit_clipboard"}
+              ])
 
               {:ok, _} =
                 ElixirKit.Bridge.start_link(
@@ -556,7 +569,10 @@ defmodule ElixirKit.PubSub.Test do
           .expect("failed to register window capability");
 
           let code = r#"
-              Mix.install([{:jason, "~> 1.4"}, {:elixirkit, path: "#{__DIR__}/../.."}])
+              Mix.install([
+                {:jason, "~> 1.4"},
+                {:elixirkit_window, path: "#{__DIR__}/../../packages/elixirkit_window"}
+              ])
 
               {:ok, _} =
                 ElixirKit.Bridge.start_link(

@@ -4,7 +4,8 @@
 //! using the existing reserved topic and outer envelope, and currently handles
 //! built-in bridge-core operations plus explicitly registered host operation
 //! handlers. Dispatch is still intentionally narrow and explicit at this
-//! stage; this is not the later package split or omnibus plugin architecture.
+//! stage; this is not the final productized plugin architecture or omnibus
+//! plugin model.
 #![expect(
     clippy::redundant_pub_crate,
     reason = "Broker items stay crate-visible for the internal seam while the module remains internal to the crate"

@@ -3,6 +3,9 @@ defmodule ExampleWeb.PageControllerTest do
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Count:"
+    html = html_response(conn, 200)
+
+    assert html =~ "ElixirKit Bridge Showcase"
+    assert html =~ "Increment Counter"
   end
 end

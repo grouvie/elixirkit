@@ -1,14 +1,15 @@
 defmodule ElixirKit.Opener do
   @moduledoc """
-  Tiny Elixir wrapper for the first real host capability vertical slice.
+  Tiny Elixir wrapper for the `opener` host capability.
 
-  This module stays intentionally small. It delegates to
-  `ElixirKit.Bridge.call/4` over the existing brokered bridge path and uses
-  the shared JSON body helpers for its request and success-response payloads.
+  This module stays intentionally small. It delegates to the existing
+  brokered bridge call path and uses the shared JSON body helpers for its
+  request and success-response payloads.
 
   Registration of the backing host capability is still explicit on the Rust
   side. In the example Tauri app that registration happens in
-  `src-tauri/src/lib.rs`; this is not the later plugin/package split yet.
+  `src-tauri/src/lib.rs`, now through the extracted
+  `tauri-plugin-elixir-opener` helper crate.
   """
 
   @type open_result() :: :ok | {:error, term()}

@@ -4,7 +4,8 @@ defmodule ElixirKit.Window do
 
   This module keeps the existing brokered bridge path and uses the shared JSON
   body helpers for request and success-response payloads. Registration remains
-  explicit on the Rust side.
+  explicit on the Rust side, now through the extracted
+  `tauri-plugin-elixir-window` helper crate.
   """
 
   alias ElixirKit.Bridge

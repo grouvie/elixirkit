@@ -16,10 +16,10 @@ defmodule ElixirKit.Bridge do
   matches responses by `request_id`, while ordinary PubSub traffic stays
   unchanged.
 
-  No NIF-backed bridge, mobile runtime, or capability/plugin architecture is
-  introduced here yet. `ElixirKit.PubSub` remains fully supported and backward
-  compatible; `ElixirKit.Bridge` simply gives Elixir code a forward-compatible
-  module to depend on while the transport stays the same.
+  No NIF-backed bridge, mobile runtime, or wrapper CLI is introduced here.
+  `ElixirKit.PubSub` remains fully supported and backward compatible;
+  `ElixirKit.Bridge` simply gives Elixir code a forward-compatible module to
+  depend on while the transport stays the same.
 
   ## Examples
 
