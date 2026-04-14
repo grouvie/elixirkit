@@ -12,6 +12,12 @@ Also, see:
   * [`examples/tauri_project`](https://github.com/livebook-dev/elixirkit/blob/main/examples/tauri_project)
   * [`examples/tauri_script.rs`](https://github.com/livebook-dev/elixirkit/blob/main/examples/tauri_script.rs)
 
+`examples/tauri_project` is now the primary migration/reference app for the
+current bridge architecture. It is intentionally example-focused: it shows the
+handshake, capability discovery, brokered request/response, multiple
+capabilities, and raw topic events while still using the same underlying
+transport, broker, protocol, and desktop startup flow.
+
 ## Usage
 
 On the Rust side, use [`elixirkit::elixir`] to start Elixir and
@@ -115,7 +121,9 @@ preferred host seam remains `PubSub::register_capability_handlers`, which
 registers capability metadata together with the handlers for its available
 actions so metadata and dispatch cannot drift silently. Capability request and
 success-response bodies still use JSON only inside the existing broker payload
-bytes; the outer bridge envelope stays the same binary protocol.
+bytes; the outer bridge envelope stays the same binary protocol. The current
+example keeps those handlers on the existing broker callback path and does not
+add a separate main-thread handoff layer or any broker redesign.
 
 The example Tauri app now stays explicit and small:
 
@@ -125,10 +133,18 @@ tauri_plugin_elixir_clipboard::register(&pubsub, app.handle())?;
 tauri_plugin_elixir_window::register(&pubsub, app.handle())?;
 ```
 
-The LiveView home screen in that example is now a small showcase instead of
-only a counter. It still keeps the raw `"ready"` and `"count"` flow intact,
-and it now also drives `bridge.echo`, capability discovery, clipboard, window,
-and opener calls from Elixir through the extracted capability packages.
+The LiveView home screen in that example is now a small reference console
+instead of only a counter. It still keeps the raw `"ready"` and `"count"`
+flow intact, and it now also shows:
+
+- bridge status and handshake context
+- capability discovery from `ElixirKit.Bridge.capabilities/0`
+- a brokered `bridge.echo` request/response form
+- opener, clipboard, and window demos through the extracted packages
+- an example-local event log fed by the unchanged raw `messages` topic
+
+That event log is still just raw topic traffic. The brokered calls above it are
+separate demos of the existing request/response path over the same transport.
 
 Capability discovery reflects that explicit registration:
 

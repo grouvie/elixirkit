@@ -7,16 +7,10 @@ use std::io;
 
 use elixirkit::{
     ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
-    CapabilityNamespace, CapabilityPermission, PubSub,
+    CapabilityNamespace, CapabilityPermission, EmptyJsonObject, PubSub,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-
-#[derive(Debug, Deserialize)]
-struct EmptyRequest;
-
-#[derive(Debug, Serialize)]
-struct EmptyResponse;
 
 #[derive(Debug, Serialize)]
 struct WindowInfo {
@@ -48,7 +42,7 @@ pub fn register(pubsub: &PubSub, app_handle: &tauri::AppHandle) -> io::Result<()
     pubsub.register_capability_handlers(
         namespace_descriptor(),
         vec![
-            CapabilityHandler::json("list", move |_request: EmptyRequest| {
+            CapabilityHandler::json("list", move |_request: EmptyJsonObject| {
                 let mut windows = app_handle_for_list
                     .webview_windows()
                     .into_iter()
@@ -71,7 +65,7 @@ pub fn register(pubsub: &PubSub, app_handle: &tauri::AppHandle) -> io::Result<()
                     .set_title(&request.title)
                     .map_err(|error| error.to_string())?;
 
-                Ok(EmptyResponse)
+                Ok(EmptyJsonObject)
             }),
         ],
     )

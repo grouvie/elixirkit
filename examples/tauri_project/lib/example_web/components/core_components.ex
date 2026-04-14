@@ -204,25 +204,29 @@ defmodule ExampleWeb.CoreComponents do
       end)
 
     ~H"""
-    <div class="fieldset mb-2">
+    <div class="mb-3">
       <label for={@id}>
-        <input
-          type="hidden"
-          name={@name}
-          value="false"
-          disabled={@rest[:disabled]}
-          form={@rest[:form]}
-        />
-        <span class="label">
+        <span class="inline-flex items-center gap-2 text-sm text-zinc-800">
+          <input
+            type="hidden"
+            name={@name}
+            value="false"
+            disabled={@rest[:disabled]}
+            form={@rest[:form]}
+          />
           <input
             type="checkbox"
             id={@id}
             name={@name}
             value="true"
             checked={@checked}
-            class={@class || "checkbox checkbox-sm"}
+            class={
+              @class ||
+                "h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-2 focus:ring-zinc-200"
+            }
             {@rest}
-          />{@label}
+          />
+          {@label}
         </span>
       </label>
       <.error :for={msg <- @errors}>{msg}</.error>
@@ -232,13 +236,18 @@ defmodule ExampleWeb.CoreComponents do
 
   def input(%{type: "select"} = assigns) do
     ~H"""
-    <div class="fieldset mb-2">
+    <div class="mb-3">
       <label for={@id}>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="mb-1 block text-sm font-medium text-zinc-800">{@label}</span>
         <select
           id={@id}
           name={@name}
-          class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
+          class={[
+            @class ||
+              "block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-200",
+            @errors != [] &&
+              (@error_class || "border-red-400 focus:border-red-400 focus:ring-red-100")
+          ]}
           multiple={@multiple}
           {@rest}
         >
@@ -253,15 +262,17 @@ defmodule ExampleWeb.CoreComponents do
 
   def input(%{type: "textarea"} = assigns) do
     ~H"""
-    <div class="fieldset mb-2">
+    <div class="mb-3">
       <label for={@id}>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="mb-1 block text-sm font-medium text-zinc-800">{@label}</span>
         <textarea
           id={@id}
           name={@name}
           class={[
-            @class || "w-full textarea",
-            @errors != [] && (@error_class || "textarea-error")
+            @class ||
+              "block min-h-24 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-200",
+            @errors != [] &&
+              (@error_class || "border-red-400 focus:border-red-400 focus:ring-red-100")
           ]}
           {@rest}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
@@ -274,17 +285,19 @@ defmodule ExampleWeb.CoreComponents do
   # All other inputs text, datetime-local, url, password, etc. are handled here...
   def input(assigns) do
     ~H"""
-    <div class="fieldset mb-2">
+    <div class="mb-3">
       <label for={@id}>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="mb-1 block text-sm font-medium text-zinc-800">{@label}</span>
         <input
           type={@type}
           name={@name}
           id={@id}
           value={Phoenix.HTML.Form.normalize_value(@type, @value)}
           class={[
-            @class || "w-full input",
-            @errors != [] && (@error_class || "input-error")
+            @class ||
+              "block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-200",
+            @errors != [] &&
+              (@error_class || "border-red-400 focus:border-red-400 focus:ring-red-100")
           ]}
           {@rest}
         />
@@ -297,8 +310,7 @@ defmodule ExampleWeb.CoreComponents do
   # Helper used by inputs to generate form errors
   defp error(assigns) do
     ~H"""
-    <p class="mt-1.5 flex gap-2 items-center text-sm text-error">
-      <.icon name="hero-exclamation-circle" class="size-5" />
+    <p class="mt-1 text-sm text-red-600">
       {render_slot(@inner_block)}
     </p>
     """

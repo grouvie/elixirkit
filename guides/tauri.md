@@ -218,6 +218,8 @@ Tauri core APIs. The capability-specific host code now lives in separate local
 crates under `crates/`, while the Elixir wrappers (`ElixirKit.Opener`,
 `ElixirKit.Clipboard`, and `ElixirKit.Window`) live in separate local packages
 under `packages/`. The raw `"ready"` / `"count"` PubSub flow stays unchanged.
+The example keeps these handlers on the existing broker callback path and does
+not add a separate main-thread handoff layer or any broker redesign.
 The example app's Mix project depends on those wrapper packages explicitly:
 
 ```elixir
@@ -237,18 +239,27 @@ $ cargo tauri dev
 
 When the example boots under Tauri now, the home screen is no longer just the
 old counter. It still keeps the original `"ready"` and `"count"` topic flow,
-and it also exposes a small bridge dashboard that can:
+and it also exposes a small reference console that shows:
 
+- bridge status and the current handshake/capability summary
 - refresh `ElixirKit.Bridge.capabilities/0`
-- round-trip `bridge.echo`
+- round-trip `bridge.echo` with a typed payload
 - read and write the clipboard
 - list and rename host windows
 - dispatch opener calls
+- show an event log of raw `messages` topic traffic through an example-local
+  forwarder
 
 Those UI actions exercise the extracted Elixir capability packages while the
 host-side registration still stays explicit in `src-tauri/src/lib.rs`.
 
-We can add more broadcasts from either side. For example, let's broadcast a message whenever counter is increased. Change `lib/example_web/live/home_live.ex`:
+The event log is intentionally still based on the unchanged raw topic path. It
+does not introduce a new public bridge-core event API. The brokered capability
+calls above it are a separate demo of the existing request/response path over
+the same transport.
+
+We can add more broadcasts from either side. For example, let's broadcast a
+message whenever counter is increased. Change `lib/example_web/live/home_live.ex`:
 
 ```diff
   @impl true
@@ -267,6 +278,11 @@ We should now see in terminal output:
 [rust] count:2
 ...
 ```
+
+In the current example app the Tauri host also sends a couple of small
+example-specific raw `messages` payloads back so the LiveView event log can
+show host-originated traffic during normal use. That is still raw topic
+traffic, not a new core bridge event layer.
 
 For local docs generation, each extracted Elixir capability package now also
 has its own `mix docs` flow, and running `mix docs` from the repo root

@@ -7,16 +7,10 @@ use std::io;
 
 use elixirkit::{
     ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
-    CapabilityNamespace, CapabilityPermission, PubSub,
+    CapabilityNamespace, CapabilityPermission, EmptyJsonObject, PubSub,
 };
 use serde::{Deserialize, Serialize};
 use tauri_plugin_clipboard_manager::ClipboardExt;
-
-#[derive(Debug, Deserialize)]
-struct EmptyRequest;
-
-#[derive(Debug, Serialize)]
-struct EmptyResponse;
 
 #[derive(Debug, Deserialize)]
 struct WriteTextRequest {
@@ -44,7 +38,7 @@ pub fn register(pubsub: &PubSub, app_handle: &tauri::AppHandle) -> io::Result<()
     pubsub.register_capability_handlers(
         namespace_descriptor(),
         vec![
-            CapabilityHandler::json("read_text", move |_request: EmptyRequest| {
+            CapabilityHandler::json("read_text", move |_request: EmptyJsonObject| {
                 let text = app_handle_for_read
                     .clipboard()
                     .read_text()
@@ -58,7 +52,7 @@ pub fn register(pubsub: &PubSub, app_handle: &tauri::AppHandle) -> io::Result<()
                     .write_text(&request.text)
                     .map_err(|error| error.to_string())?;
 
-                Ok(EmptyResponse)
+                Ok(EmptyJsonObject)
             }),
         ],
     )

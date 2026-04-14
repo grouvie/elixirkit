@@ -22,6 +22,7 @@ use serde::de::DeserializeOwned;
 
 mod broker;
 mod capabilities;
+mod json;
 pub(crate) mod protocol;
 mod pubsub;
 mod runtime;
@@ -31,6 +32,7 @@ pub use capabilities::{
     BackingKind as CapabilityBacking, CapabilityHandler,
     NamespaceDescriptor as CapabilityNamespace, PermissionState as CapabilityPermission,
 };
+pub use json::EmptyJsonObject;
 pub use pubsub::PubSub;
 
 /// Returns a command for running `elixir`.
@@ -105,6 +107,8 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
+    use super::EmptyJsonObject;
+
     #[test]
     fn json_body_helpers_round_trip() {
         let mut payload = BTreeMap::new();
@@ -117,5 +121,29 @@ mod tests {
             .expect("json payload should decode successfully");
 
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn empty_json_object_round_trips_as_an_empty_map() {
+        let encoded =
+            crate::encode_json_body(&EmptyJsonObject).expect("empty object should encode");
+        let decoded = crate::decode_json_body::<EmptyJsonObject>(&encoded)
+            .expect("empty object should decode");
+
+        assert_eq!(encoded, b"{}");
+        assert_eq!(decoded, EmptyJsonObject);
+    }
+
+    #[test]
+    fn empty_json_object_rejects_non_empty_or_non_object_json() {
+        assert!(
+            crate::decode_json_body::<EmptyJsonObject>(br#"{"value":1}"#).is_err(),
+            "non-empty objects should be rejected"
+        );
+
+        assert!(
+            crate::decode_json_body::<EmptyJsonObject>(b"null").is_err(),
+            "null should be rejected"
+        );
     }
 }

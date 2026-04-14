@@ -8,18 +8,15 @@ use std::io;
 
 use elixirkit::{
     ActionAvailability, CapabilityAction, CapabilityBacking, CapabilityHandler,
-    CapabilityNamespace, CapabilityPermission, PubSub,
+    CapabilityNamespace, CapabilityPermission, EmptyJsonObject, PubSub,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Deserialize)]
 struct OpenRequest {
     target: String,
 }
-
-#[derive(Debug, Serialize)]
-struct EmptyResponse;
 
 /// Registers the `opener` capability and its `opener.open` handler.
 ///
@@ -42,7 +39,7 @@ pub fn register(pubsub: &PubSub, app_handle: &tauri::AppHandle) -> io::Result<()
                     .open_url(request.target, None::<String>)
                     .map_err(|error| error.to_string())?;
 
-                Ok(EmptyResponse)
+                Ok(EmptyJsonObject)
             },
         )],
     )

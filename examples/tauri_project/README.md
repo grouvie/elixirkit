@@ -10,11 +10,13 @@ It keeps the original raw PubSub handshake and counter flow:
 It also now demonstrates the richer bridge surface that sits on top of that
 same transport:
 
+- bridge status and handshake summary
 - `ElixirKit.Bridge.capabilities/0`
 - `bridge.echo` over the brokered request/response path
 - `ElixirKit.Clipboard`
 - `ElixirKit.Window`
 - `ElixirKit.Opener`
+- a raw `messages` topic event log driven by an example-local forwarder
 
 ## Run It
 

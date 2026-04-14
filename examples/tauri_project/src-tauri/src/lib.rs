@@ -11,12 +11,21 @@ pub fn run() {
             register_host_capabilities(&pubsub, app.handle());
 
             let app_handle = app.handle().clone();
+            let pubsub_for_messages = pubsub.clone();
 
             pubsub.subscribe("messages", move |msg| {
                 if msg == b"ready" {
+                    let _ = pubsub_for_messages.broadcast("messages", b"host:ready acknowledged");
                     create_window(&app_handle);
+                    let _ = pubsub_for_messages.broadcast("messages", b"host:window created");
                 } else {
-                    println!("[rust] {}", String::from_utf8_lossy(msg));
+                    let message = String::from_utf8_lossy(msg);
+                    println!("[rust] {message}");
+
+                    if message.starts_with("count:") {
+                        let observed = format!("host:observed {message}");
+                        let _ = pubsub_for_messages.broadcast("messages", observed.as_bytes());
+                    }
                 }
             });
 
