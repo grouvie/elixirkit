@@ -174,7 +174,7 @@ Next, let's add `elixirkit` to `Cargo.toml` dependencies. ElixirKit Hex package 
   tauri = { version = "2", features = [] }
   tauri-plugin-clipboard-manager = "2"
   tauri-plugin-opener = "2"
-+ elixirkit = { path = "../deps/elixirkit/elixirkit_rs" }
++ elixirkit = { path = "../deps/elixirkit/elixirkit_rs", features = ["tauri"] }
 ```
 
 Let's change `tauri.conf.json` to not create any windows initially. We'll create them programmatically once LiveView is ready:
@@ -189,37 +189,72 @@ Let's change `tauri.conf.json` to not create any windows initially. We'll create
 - ],
 ```
 
-Finally, let's start Elixir from the Tauri app and register a few real host
-capability slices explicitly in `src-tauri/src/lib.rs`. The stable seam is
-`register_capability_handlers`: it keeps the declared actions and their
-handlers together while still leaving registration fully app-owned. Here's the
-relevant code:
+Finally, let's start Elixir from the Tauri app through the new host-side
+`elixirkit::Bridge` builder and register a few real host capability slices
+explicitly in `src-tauri/src/lib.rs`. `PubSub` still remains the low-level
+transport API, and the stable low-level capability seam is still
+`register_capability_handlers`; `Bridge` just owns the host setup boilerplate
+on top of it. This host layer is enabled by the Rust crate's `tauri` feature.
+Here's the relevant code:
 
 ```rust
+use std::io;
+use std::process::Command;
+
+use elixirkit::{Bridge, BridgeContext, BridgeLaunchContext};
 use tauri::Manager;
 
-fn register_host_capabilities(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
-    tauri_plugin_elixir_opener::register(pubsub, app_handle)
-        .expect("failed to register opener capability");
-    tauri_plugin_elixir_clipboard::register(pubsub, app_handle)
-        .expect("failed to register clipboard capability");
-    tauri_plugin_elixir_window::register(pubsub, app_handle)
-        .expect("failed to register window capability");
+fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            Bridge::builder()
+                .listen_url("tcp://127.0.0.1:0")
+                .capability(tauri_plugin_elixir_opener::register)
+                .capability(tauri_plugin_elixir_clipboard::register)
+                .capability(tauri_plugin_elixir_window::register)
+                .on_topic("messages", handle_messages)
+                .launch(example_elixir_command)
+                .attach(app)
+                .expect("failed to attach ElixirKit bridge");
+
+            Ok(())
+        });
+}
+
+fn handle_messages(context: BridgeContext, message: &[u8]) {
+    if message == b"ready" {
+        let _ = context.broadcast("messages", b"host:ready acknowledged");
+        create_window(context.app_handle());
+        let _ = context.broadcast("messages", b"host:window created");
+    }
+}
+
+fn example_elixir_command(context: &BridgeLaunchContext) -> io::Result<Command> {
+    if cfg!(debug_assertions) {
+        Ok(elixirkit::mix("phx.server", &[]))
+    } else {
+        let mut command = elixirkit::release(context.resource_dir()?.join("rel"), "example");
+        command.env("PHX_SERVER", "true");
+        Ok(command)
+    }
 }
 ```
 
-We still subscribe to the `messages` PubSub topic exactly as before. Once
-Elixir sends the `ready` message, we create a window pointing to our LiveView.
-The new part is the explicit registration contract: the example app now
-registers `opener`, `clipboard`, and `window` without hardcoding any of them
-into the bridge core. `opener` uses Tauri's official opener plugin,
-`clipboard` uses Tauri's official clipboard plugin, and `window` uses direct
-Tauri core APIs. The capability-specific host code now lives in separate local
-crates under `crates/`, while the Elixir wrappers (`ElixirKit.Opener`,
-`ElixirKit.Clipboard`, and `ElixirKit.Window`) live in separate local packages
-under `packages/`. The raw `"ready"` / `"count"` PubSub flow stays unchanged.
-The example keeps these handlers on the existing broker callback path and does
-not add a separate main-thread handoff layer or any broker redesign.
+We still subscribe to the `messages` topic exactly as before. Once Elixir
+sends the `ready` message, we create a window pointing to our LiveView. The
+new part is the explicit registration contract: the example app now registers
+`opener`, `clipboard`, and `window` through `BridgeBuilder::capability(...)`
+without hardcoding any of them into the bridge core. `opener` uses Tauri's
+official opener plugin, `clipboard` uses Tauri's official clipboard plugin,
+and `window` uses direct Tauri core APIs. The capability-specific host code
+now lives in separate local crates under `crates/`, while the Elixir wrappers
+(`ElixirKit.Opener`, `ElixirKit.Clipboard`, and `ElixirKit.Window`) live in
+separate local packages under `packages/`. The raw `"ready"` / `"count"`
+PubSub flow stays unchanged. The example keeps these handlers on the existing
+broker callback path and does not add a separate main-thread handoff layer,
+wrapper CLI, bootstrap negotiation layer, or broker redesign.
 The example app's Mix project depends on those wrapper packages explicitly:
 
 ```elixir

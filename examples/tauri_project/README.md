@@ -38,6 +38,13 @@ For the full desktop flow with the host bridge and extracted capability crates:
 cargo tauri dev
 ```
 
+The preferred host setup pattern now lives in
+`src-tauri/src/lib.rs` through `elixirkit::Bridge::builder()`. `PubSub`
+remains available underneath for low-level use, but the example now uses the
+builder to keep topic hooks, explicit capability registration, and Elixir
+launch wiring in one place without introducing a wrapper CLI or startup
+negotiation layer.
+
 ## Local Dependencies
 
 The example depends on the root bridge/core package plus the extracted local

@@ -2,6 +2,8 @@
 
 use serde as _;
 use serde_json as _;
+#[cfg(feature = "tauri")]
+use tauri as _;
 
 #[cfg(test)]
 mod tests {

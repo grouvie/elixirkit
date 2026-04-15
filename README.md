@@ -2,7 +2,8 @@
 
 [![Test](https://github.com/livebook-dev/elixirkit/actions/workflows/test.yml/badge.svg)](https://github.com/livebook-dev/elixirkit/actions/workflows/test.yml)
 
-Run Elixir from Rust/Tauri apps and exchange messages over the current TCP [PubSub] transport.
+Run Elixir from Rust/Tauri apps over the current TCP [PubSub] transport, with
+an ergonomic host-side [`Bridge`] layer for Tauri setup.
 
 See ["Building Desktop Apps with Tauri"](guides/tauri.md) for a step-by-step guide for using ElixirKit with Phoenix LiveView and [Tauri](https://tauri.app).
 
@@ -20,9 +21,10 @@ transport, broker, protocol, and desktop startup flow.
 
 ## Usage
 
-On the Rust side, use [`elixirkit::elixir`] to start Elixir and
-[`elixirkit::PubSub`] to exchange messages. Subscribe before starting Elixir so
-no messages are missed:
+### Low-level transport
+
+[`elixirkit::PubSub`] remains the public low-level transport API. Use it
+directly when you want full control over topics, launching, and lifecycle:
 
 ```rust
 // main.rs
@@ -43,6 +45,46 @@ let status = elixirkit::elixir(&["script.exs"])
 
 std::process::exit(status.code().unwrap_or(1));
 ```
+
+### Tauri host setup
+
+For Tauri hosts, enable the crate's `tauri` feature and prefer
+[`elixirkit::Bridge`] and [`elixirkit::BridgeBuilder`] for setup ergonomics.
+They still use the same underlying `PubSub` transport, but they own the
+common host chores: listening, explicit capability registration, topic hooks,
+and Elixir process launch wiring.
+
+```rust
+use elixirkit::{Bridge, BridgeContext, BridgeLaunchContext};
+
+tauri::Builder::default().setup(|app| {
+    Bridge::builder()
+        .listen_url("tcp://127.0.0.1:0")
+        .capability(tauri_plugin_elixir_opener::register)
+        .capability(tauri_plugin_elixir_clipboard::register)
+        .capability(tauri_plugin_elixir_window::register)
+        .on_topic("messages", |context: BridgeContext, message| {
+            if message == b"ready" {
+                let _ = context.broadcast("messages", b"host:ready acknowledged");
+                let _ = context.broadcast("messages", b"host:window created");
+            }
+        })
+        .launch(|context: &BridgeLaunchContext| {
+            if cfg!(debug_assertions) {
+                Ok(elixirkit::mix("phx.server", &[]))
+            } else {
+                Ok(elixirkit::release(context.resource_dir()?.join("rel"), "example"))
+            }
+        })
+        .attach(app)
+        .expect("failed to attach ElixirKit bridge");
+
+    Ok(())
+});
+```
+
+This is still not the wrapper CLI or the final bootstrap negotiation model.
+`Bridge` is only a thin host-side ergonomic layer over the current transport.
 
 On the Elixir side, prefer [`ElixirKit.Bridge`] as the application-facing entrypoint.
 Today it is a thin delegation layer over [`ElixirKit.PubSub`], so the public
@@ -117,20 +159,23 @@ changing the transport or outer bridge framing:
 
 Registration is still explicit in `src-tauri/src/lib.rs`, but the
 capability-specific host code now lives in separate local crates. The
-preferred host seam remains `PubSub::register_capability_handlers`, which
-registers capability metadata together with the handlers for its available
-actions so metadata and dispatch cannot drift silently. Capability request and
-success-response bodies still use JSON only inside the existing broker payload
-bytes; the outer bridge envelope stays the same binary protocol. The current
-example keeps those handlers on the existing broker callback path and does not
-add a separate main-thread handoff layer or any broker redesign.
+low-level capability seam remains `PubSub::register_capability_handlers`,
+which registers capability metadata together with the handlers for its
+available actions so metadata and dispatch cannot drift silently. The new
+Rust-side `Bridge` builder simply layers host setup ergonomics on top of that
+same contract. Capability request and success-response bodies still use JSON
+only inside the existing broker payload bytes; the outer bridge envelope stays
+the same binary protocol. The current example keeps those handlers on the
+existing broker callback path and does not add a separate main-thread handoff
+layer or any broker redesign.
 
 The example Tauri app now stays explicit and small:
 
 ```rust
-tauri_plugin_elixir_opener::register(&pubsub, app.handle())?;
-tauri_plugin_elixir_clipboard::register(&pubsub, app.handle())?;
-tauri_plugin_elixir_window::register(&pubsub, app.handle())?;
+Bridge::builder()
+    .capability(tauri_plugin_elixir_opener::register)
+    .capability(tauri_plugin_elixir_clipboard::register)
+    .capability(tauri_plugin_elixir_window::register);
 ```
 
 The LiveView home screen in that example is now a small reference console

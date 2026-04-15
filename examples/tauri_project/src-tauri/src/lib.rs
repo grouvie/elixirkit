@@ -1,58 +1,57 @@
+use std::io;
+use std::process::Command;
+
+use elixirkit::{Bridge, BridgeContext, BridgeLaunchContext};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let pubsub = elixirkit::PubSub::listen("tcp://127.0.0.1:0").expect("failed to listen");
-
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(move |app| {
-            register_host_capabilities(&pubsub, app.handle());
-
-            let app_handle = app.handle().clone();
-            let pubsub_for_messages = pubsub.clone();
-
-            pubsub.subscribe("messages", move |msg| {
-                if msg == b"ready" {
-                    let _ = pubsub_for_messages.broadcast("messages", b"host:ready acknowledged");
-                    create_window(&app_handle);
-                    let _ = pubsub_for_messages.broadcast("messages", b"host:window created");
-                } else {
-                    let message = String::from_utf8_lossy(msg);
-                    println!("[rust] {message}");
-
-                    if message.starts_with("count:") {
-                        let observed = format!("host:observed {message}");
-                        let _ = pubsub_for_messages.broadcast("messages", observed.as_bytes());
-                    }
-                }
-            });
-
-            let app_handle = app.handle().clone();
-
-            tauri::async_runtime::spawn_blocking(move || {
-                let rel_dir = app_handle.path().resource_dir().unwrap().join("rel");
-                let mut command = elixir_command(&rel_dir);
-                command.env("ELIXIRKIT_PUBSUB", pubsub.url());
-                let status = command.status().expect("failed to start Elixir");
-
-                app_handle.exit(status.code().unwrap_or(1));
-            });
-
+        .setup(|app| {
+            Bridge::builder()
+                .listen_url("tcp://127.0.0.1:0")
+                .capability(tauri_plugin_elixir_opener::register)
+                .capability(tauri_plugin_elixir_clipboard::register)
+                .capability(tauri_plugin_elixir_window::register)
+                .on_topic("messages", handle_messages)
+                .launch(example_elixir_command)
+                .attach(app)
+                .expect("failed to attach ElixirKit bridge");
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-fn register_host_capabilities(pubsub: &elixirkit::PubSub, app_handle: &tauri::AppHandle) {
-    tauri_plugin_elixir_opener::register(pubsub, app_handle)
-        .expect("failed to register opener capability");
-    tauri_plugin_elixir_clipboard::register(pubsub, app_handle)
-        .expect("failed to register clipboard capability");
-    tauri_plugin_elixir_window::register(pubsub, app_handle)
-        .expect("failed to register window capability");
+fn handle_messages(context: BridgeContext, message: &[u8]) {
+    if message == b"ready" {
+        if let Err(error) = context.broadcast("messages", b"host:ready acknowledged") {
+            eprintln!(
+                "[rust] failed to broadcast {:?}: {error}",
+                "host:ready acknowledged"
+            );
+        }
+        create_window(context.app_handle());
+        if let Err(error) = context.broadcast("messages", b"host:window created") {
+            eprintln!(
+                "[rust] failed to broadcast {:?}: {error}",
+                "host:window created"
+            );
+        }
+        return;
+    }
+
+    let message = String::from_utf8_lossy(message);
+    println!("[rust] {message}");
+
+    if message.starts_with("count:") {
+        let observed = format!("host:observed {message}");
+        if let Err(error) = context.broadcast("messages", observed.as_bytes()) {
+            eprintln!("[rust] failed to broadcast {observed:?}: {error}");
+        }
+    }
 }
 
 fn create_window(app_handle: &tauri::AppHandle) {
@@ -65,13 +64,14 @@ fn create_window(app_handle: &tauri::AppHandle) {
         .unwrap();
 }
 
-fn elixir_command(rel_dir: &std::path::Path) -> std::process::Command {
+fn example_elixir_command(context: &BridgeLaunchContext) -> io::Result<Command> {
     if cfg!(debug_assertions) {
         let mut command = elixirkit::mix("phx.server", &[]);
         command.current_dir("..");
-        command
+        Ok(command)
     } else {
-        let mut command = elixirkit::release(rel_dir, "example");
+        let rel_dir = context.resource_dir()?.join("rel");
+        let mut command = elixirkit::release(&rel_dir, "example");
         command.env("PHX_SERVER", "true");
         command.env("PHX_HOST", "127.0.0.1");
         command.env("PORT", "4000");
@@ -79,6 +79,6 @@ fn elixir_command(rel_dir: &std::path::Path) -> std::process::Command {
             "SECRET_KEY_BASE",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         );
-        command
+        Ok(command)
     }
 }

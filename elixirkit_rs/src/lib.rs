@@ -11,8 +11,10 @@
 //! [`PubSub`] while the transport and outer envelope stay the same. Capability
 //! request and success-response bodies may now use a small JSON convention via
 //! [`encode_json_body`] and [`decode_json_body`] without changing that outer
-//! framing. The command helpers still build correctly configured [`Command`]
-//! values for common Elixir entry points.
+//! framing. For Tauri hosts, [`Bridge`] and [`BridgeBuilder`] add a thin
+//! ergonomic setup layer on top of [`PubSub`] without changing the underlying
+//! transport semantics. The command helpers still build correctly configured
+//! [`Command`] values for common Elixir entry points.
 
 use std::path::Path;
 use std::process::Command;
@@ -20,6 +22,8 @@ use std::process::Command;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+#[cfg(feature = "tauri")]
+mod bridge;
 mod broker;
 mod capabilities;
 mod json;
@@ -27,6 +31,8 @@ pub(crate) mod protocol;
 mod pubsub;
 mod runtime;
 
+#[cfg(feature = "tauri")]
+pub use bridge::{Bridge, BridgeBuilder, BridgeContext, BridgeHandle, BridgeLaunchContext};
 pub use capabilities::{
     ActionDescriptor as CapabilityAction, Availability as ActionAvailability,
     BackingKind as CapabilityBacking, CapabilityHandler,
